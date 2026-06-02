@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gain Direzionale Lab</title>
+    <link rel="stylesheet" href="./styles.css?v=20260517-rollback1" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Oculomotor Tracking Lab</p>
+        <h1>Gain direzionale</h1>
+      </div>
+      <div class="header-actions">
+        <button id="loadSampleBtn">Dati esempio 1</button>
+        <button id="loadSample2Btn" class="primary">Dati esempio 2</button>
+        <label class="file-button">
+          <input id="folderInput" type="file" webkitdirectory multiple />
+          Importa cartella Pupil
+        </label>
+      </div>
+    </header>
+
+    <main>
+      <section class="status-band" id="statusBand">
+        <div>
+          <span class="status-dot"></span>
+          <strong id="statusTitle">Nessun dato caricato</strong>
+        </div>
+        <p id="statusText">Carica `gaze.csv`; opzionali ma consigliati: `saccades.csv`, `blinks.csv`, `info.json`.</p>
+      </section>
+
+      <section class="workspace-grid">
+        <aside class="control-panel">
+          <div class="panel-head">
+            <h2>Protocollo</h2>
+          </div>
+
+          <div class="form-grid">
+            <label>
+              Distanza paziente-monitor (cm)
+              <input id="monitorDistance" type="number" min="1" step="0.1" value="35" />
+            </label>
+            <label>
+              Distanza breve (cm)
+              <input id="nearDistance" type="number" min="0.1" step="0.1" value="9" />
+            </label>
+            <label>
+              Distanza ampia (cm)
+              <input id="farDistance" type="number" min="0.1" step="0.1" value="16" />
+            </label>
+            <label>
+              Durata movimento (ms)
+              <input id="durationMs" type="number" min="20" step="10" value="300" />
+            </label>
+            <label>
+              Finestra gain inizio (ms)
+              <input id="windowStartMs" type="number" min="0" step="5" value="120" />
+            </label>
+            <label>
+              Finestra gain fine (ms)
+              <input id="windowEndMs" type="number" min="1" step="5" value="220" />
+            </label>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="panel-head compact">
+            <h2>Trial</h2>
+            <label class="file-button slim">
+              <input id="trialInput" type="file" accept=".csv" />
+              Importa CSV trial
+            </label>
+          </div>
+
+          <div class="trial-builder">
+            <label>
+              Onset movimento (s)
+              <input id="newOnset" type="number" step="0.001" placeholder="es. 4.250" />
+            </label>
+            <label>
+              Direzione
+              <select id="newDirection">
+                <option value="left">Sinistra</option>
+                <option value="right">Destra</option>
+              </select>
+            </label>
+            <label>
+              Distanza
+              <select id="newDistanceKind">
+                <option value="near">Breve</option>
+                <option value="far">Ampia</option>
+              </select>
+            </label>
+            <button id="addTrialBtn">Aggiungi trial</button>
+          </div>
+
+          <div class="button-row">
+            <button id="suggestEventsBtn">Proponi da events</button>
+            <button id="suggestTrialsBtn">Proponi da saccadi</button>
+            <button id="clearTrialsBtn" class="ghost">Svuota trial</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="metrics-note">
+            <strong>Gain primario</strong>
+            <span>mediana della velocita oculare orizzontale, senza blink/saccadi, divisa per la velocita del target.</span>
+          </div>
+        </aside>
+
+        <section class="analysis-panel">
+          <div class="panel-head compact">
+            <h2>Video stimolo</h2>
+            <label class="file-button slim">
+              <input id="videoInput" type="file" accept="video/*" />
+              Importa video
+            </label>
+          </div>
+
+          <div class="video-tools video-tools-wide">
+            <div class="video-stage" id="videoStage">
+              <video id="stimulusVideo" controls playsinline></video>
+              <canvas id="videoOverlayCanvas"></canvas>
+            </div>
+            <div class="video-time-grid">
+              <span>Video</span>
+              <strong id="videoTimeLabel">-</strong>
+              <span>Gaze</span>
+              <strong id="gazeTimeLabel">-</strong>
+            </div>
+            <label class="sync-offset-control">
+              Offset video-gaze (ms)
+              <input id="syncOffsetMs" type="number" step="5" value="0" />
+            </label>
+            <div class="button-row">
+              <button id="markCenterBtn">Segna puntino centrale</button>
+              <button id="clearCenterBtn" class="ghost">Cancella centro</button>
+            </div>
+            <div class="overlay-readout">
+              <span>Puntino</span>
+              <strong id="targetCenterLabel">-</strong>
+              <span>Sguardo</span>
+              <strong id="gazePointLabel">-</strong>
+            </div>
+            <div class="button-row">
+              <button id="frameBackBtn">- frame</button>
+              <button id="frameForwardBtn">+ frame</button>
+              <button id="addVideoTrialBtn">Aggiungi onset dal video</button>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="panel-head">
+            <div>
+              <h2>Traccia orizzontale</h2>
+              <p id="plotSubtitle">Azimuth del gaze in gradi visivi. Clicca sulla traccia per portare il video a quel tempo.</p>
+            </div>
+            <div class="button-row">
+              <button id="analyzeBtn" class="primary">Analizza</button>
+              <button id="exportCsvBtn">CSV</button>
+              <button id="exportJsonBtn">JSON</button>
+            </div>
+          </div>
+
+          <div class="plot-wrap">
+            <canvas id="traceCanvas" width="1200" height="360"></canvas>
+          </div>
+
+          <div class="summary-strip" id="summaryStrip">
+            <div class="stat-card">
+              <span>Gaze samples</span>
+              <strong id="sampleCount">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Trial</span>
+              <strong id="trialCount">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Gain sinistra</span>
+              <strong id="leftGain">-</strong>
+            </div>
+            <div class="stat-card">
+              <span>Gain destra</span>
+              <strong id="rightGain">-</strong>
+            </div>
+            <div class="stat-card">
+              <span>Indice lateralita</span>
+              <strong id="lateralityIndex">-</strong>
+            </div>
+          </div>
+
+          <div class="table-section">
+            <div class="panel-head compact">
+              <h2>Riepilogo condizioni</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Condizione</th>
+                    <th>N</th>
+                    <th>Target deg/s</th>
+                    <th>Gain precoce</th>
+                    <th>Gain posizione</th>
+                    <th>Latenza pursuit</th>
+                    <th>Catch-up</th>
+                    <th>Qualita</th>
+                  </tr>
+                </thead>
+                <tbody id="conditionBody">
+                  <tr><td colspan="8" class="empty">Nessuna analisi ancora disponibile.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="table-section">
+            <div class="panel-head compact">
+              <h2>Trial analizzati</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Onset s</th>
+                    <th>Direzione</th>
+                    <th>Distanza</th>
+                    <th>Ampiezza deg</th>
+                    <th>Gain precoce</th>
+                    <th>Gain posizione</th>
+                    <th>Latenza ms</th>
+                    <th>Campioni validi</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="trialBody">
+                  <tr><td colspan="10" class="empty">Aggiungi o importa i trial per calcolare il gain.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="trialRowTemplate">
+      <tr>
+        <td class="row-index"></td>
+        <td><input class="trial-onset" type="number" step="0.001" /></td>
+        <td>
+          <select class="trial-direction">
+            <option value="left">Sinistra</option>
+            <option value="right">Destra</option>
+          </select>
+        </td>
+        <td>
+          <select class="trial-distance">
+            <option value="near">Breve</option>
+            <option value="far">Ampia</option>
+          </select>
+        </td>
+        <td class="trial-amplitude"></td>
+        <td class="trial-gain"></td>
+        <td class="trial-position-gain"></td>
+        <td class="trial-latency"></td>
+        <td class="trial-quality"></td>
+        <td><button class="icon-button remove-trial" title="Rimuovi trial">x</button></td>
+      </tr>
+    </template>
+
+    <script src="./app.js?v=20260517-rollback1"></script>
+  </body>
+</html>
