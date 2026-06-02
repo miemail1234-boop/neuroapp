@@ -180,522 +180,488 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function median(values) {
-  const clean = values.filter(Number.isFinite).sort((a, b) => a - b);
-  if (!clean.length) return NaN;
-  const middle = Math.floor(clean.length / 2);
-  if (clean.length % 2) return clean[middle];
-  return (clean[middle - 1] + clean[middle]) / 2;
+async function readFileAsText(file) {
+  return await file.text();
 }
 
-function mean(values) {
-  const clean = values.filter(Number.isFinite);
-  if (!clean.length) return NaN;
-  return clean.reduce((sum, value) => sum + value, 0) / clean.length;
-}
-
-function standardDeviation(values) {
-  const clean = values.filter(Number.isFinite);
-  if (clean.length < 2) return NaN;
-  const avg = mean(clean);
-  const variance = clean.reduce((sum, value) => sum + (value - avg) ** 2, 0) / (clean.length - 1);
-  return Math.sqrt(variance);
-}
-
-function formatNumber(value, digits = 2) {
-  return Number.isFinite(value) ? value.toFixed(digits) : "-";
-}
-
-function directionSign(direction) {
-  return direction === "right" ? 1 : -1;
-}
-
-function directionLabel(direction) {
-  return direction === "right" ? "Destra" : "Sinistra";
-}
-
-function distanceLabel(kind) {
-  return kind === "far" ? "Ampia" : "Breve";
-}
-
-function distanceCmFor(kind, settings = getSettings()) {
-  return kind === "far" ? settings.farDistanceCm : settings.nearDistanceCm;
-}
-
-function visualAngle(distanceCm, monitorDistanceCm) {
-  return (Math.atan(distanceCm / monitorDistanceCm) * 180) / Math.PI;
-}
-
-async function loadSampleData(sampleKey = "sample1") {
-  const dataset = SAMPLE_DATASETS[sampleKey] || SAMPLE_DATASETS.sample1;
-  setStatus("warn", `Caricamento ${dataset.label}`, "Lettura dei file esportati da Pupil Labs...");
-  try {
-    const [gazeText, saccadesText, blinksText, eventsText, worldText, infoText] = await Promise.all([
-      fetchText(`${dataset.base}gaze.csv`),
-      fetchText(`${dataset.base}saccades.csv`),
-      fetchText(`${dataset.base}blinks.csv`),
-      fetchText(`${dataset.base}events.csv`),
-      fetchText(`${dataset.base}world_timestamps.csv`),
-      fetchText(`${dataset.base}info.json`),
-    ]);
-
-    loadDataset({
-      sourceName: dataset.label,
-      gazeRows: parseCSV(gazeText),
-      saccadeRows: parseCSV(saccadesText),
-      blinkRows: parseCSV(blinksText),
-      eventRows: parseCSV(eventsText),
-      worldTimestampRows: parseCSV(worldText),
-      info: JSON.parse(infoText),
-      videoSrc: `${dataset.base}${dataset.video}`,
-    });
-  } catch (error) {
-    setStatus(
-      "error",
-      `${dataset.label} non raggiungibile`,
-      "Avvia il server dalla cartella ET e apri /Gain_Direzionale_Lab/ oppure importa manualmente la cartella Pupil."
-    );
-    console.error(error);
+function findFile(files, names) {
+  const lowered = new Map(files.map((file) => [file.name.toLowerCase(), file]));
+  for (const name of names) {
+    const match = lowered.get(name.toLowerCase());
+    if (match) return match;
   }
+  return null;
 }
 
-async function fetchText(path) {
-  const response = await fetch(encodeURI(path));
-  if (!response.ok) throw new Error(`Impossibile leggere ${path}`);
-  return response.text();
+function pathLooksLike(file, name) {
+  return file.name.toLowerCase() === name || (file.webkitRelativePath || "").toLowerCase().endsWith(`/${name}`);
+}
+
+function findFileByName(files, name) {
+  return files.find((file) => pathLooksLike(file, name.toLowerCase())) || null;
 }
 
 async function handleFolderImport(event) {
   const files = Array.from(event.target.files || []);
   if (!files.length) return;
 
-  const byName = new Map(files.map((file) => [file.name.toLowerCase(), file]));
-  const gazeFile = byName.get("gaze.csv");
+  const gazeFile = findFileByName(files, "gaze.csv");
   if (!gazeFile) {
-    setStatus("error", "Manca gaze.csv", "La cartella selezionata non contiene il file gaze.csv.");
+    setStatus("bad", "gaze.csv non trovato", "Seleziona una cartella che contenga almeno gaze.csv.");
     return;
   }
 
-  const videoFile = files.find((file) => /\.(mp4|mov|m4v|webm)$/i.test(file.name));
-  const [gazeText, saccadesText, blinksText, eventsText, worldText, infoText] = await Promise.all([
-    gazeFile.text(),
-    byName.get("saccades.csv")?.text() ?? "",
-    byName.get("blinks.csv")?.text() ?? "",
-    byName.get("events.csv")?.text() ?? "",
-    byName.get("world_timestamps.csv")?.text() ?? "",
-    byName.get("info.json")?.text() ?? "",
-  ]);
-
-  loadDataset({
-    sourceName: files[0].webkitRelativePath?.split("/")[0] || "Cartella importata",
-    gazeRows: parseCSV(gazeText),
-    saccadeRows: saccadesText ? parseCSV(saccadesText) : [],
-    blinkRows: blinksText ? parseCSV(blinksText) : [],
-    eventRows: eventsText ? parseCSV(eventsText) : [],
-    worldTimestampRows: worldText ? parseCSV(worldText) : [],
-    info: infoText ? JSON.parse(infoText) : null,
-    videoSrc: videoFile ? URL.createObjectURL(videoFile) : "",
-  });
+  try {
+    await loadDatasetFromFiles(files, gazeFile.webkitRelativePath?.split("/")[0] || "Cartella importata");
+  } catch (error) {
+    console.error(error);
+    setStatus("bad", "Errore importazione", error.message || "Impossibile leggere i file selezionati.");
+  }
 }
 
-function loadDataset({ sourceName, gazeRows, saccadeRows, blinkRows, eventRows, worldTimestampRows, info, videoSrc }) {
+async function loadDatasetFromFiles(files, sourceName) {
+  const gazeFile = findFileByName(files, "gaze.csv");
+  const saccadesFile = findFileByName(files, "saccades.csv");
+  const blinksFile = findFileByName(files, "blinks.csv");
+  const eventsFile = findFileByName(files, "events.csv");
+  const worldTsFile = findFileByName(files, "world_timestamps.csv");
+  const infoFile = findFileByName(files, "info.json");
+  const videoFile = files.find((file) => /\.(mp4|mov|webm)$/i.test(file.name));
+
+  const gazeRows = parseCSV(await readFileAsText(gazeFile));
+  const info = infoFile ? JSON.parse(await readFileAsText(infoFile)) : {};
+  const events = eventsFile ? parseEvents(parseCSV(await readFileAsText(eventsFile))) : [];
+  const worldTimestamps = worldTsFile ? parseWorldTimestamps(parseCSV(await readFileAsText(worldTsFile))) : [];
+
   state.sourceName = sourceName;
   state.info = info;
-  state.t0Ns = info?.start_time ? Number(info.start_time) : getFirstTimestampNs(gazeRows);
-  state.gaze = normalizeGaze(gazeRows);
-  state.events = normalizeEvents(eventRows || []);
-  state.worldTimestamps = normalizeWorldTimestamps(worldTimestampRows || []);
-  state.saccades = normalizeIntervals(saccadeRows, "saccade");
-  state.blinks = normalizeIntervals(blinkRows, "blink");
+  state.t0Ns = getRecordingStartNs(info, gazeRows);
+  state.gaze = parseGazeRows(gazeRows, state.t0Ns);
+  state.events = events;
+  state.worldTimestamps = worldTimestamps;
+  state.saccades = saccadesFile ? parseIntervals(parseCSV(await readFileAsText(saccadesFile)), state.t0Ns, "saccade") : [];
+  state.blinks = blinksFile ? parseIntervals(parseCSV(await readFileAsText(blinksFile)), state.t0Ns, "blink") : [];
+  state.trials = [];
   state.results = [];
   state.summaries = [];
+  state.pendingVideoSrc = "";
+  clearVideoObjectUrl();
 
-  loadVideoSource(videoSrc || "");
-
-  buildVelocity();
-  flagExcludedSamples();
-
-  const eventTrials = buildTrialsFromEvents();
-  if (eventTrials.length && !state.trials.length) {
-    state.trials = eventTrials;
-    analyze();
+  if (videoFile) {
+    loadVideoFile(videoFile);
   }
+
+  setStatus("ready", "Dati caricati", `${state.gaze.length.toLocaleString("it-IT")} campioni gaze, ${state.saccades.length} saccadi, ${state.blinks.length} blink.`);
   renderAll();
-
-  const eventText = eventTrials.length
-    ? `${eventTrials.length} trial ricavati da events.csv.`
-    : "Trial non presenti in events.csv: annota/importa gli onset del movimento.";
-  const videoText = state.worldTimestamps.length
-    ? `${state.worldTimestamps.length} frame video sincronizzati.`
-    : "Manca world_timestamps.csv per sincronizzare il video.";
-  const qualityText = `${state.gaze.length} gaze samples, ${state.saccades.length} saccadi, ${state.blinks.length} blink, ${state.events.length} eventi. ${videoText} ${eventText}`;
-  setStatus("ready", `${sourceName} caricato`, qualityText);
-  updateVideoTimeLabels();
+  renderVideoOverlay();
 }
 
-function getFirstTimestampNs(rows) {
-  const first = rows.find((row) => Number.isFinite(toNumber(row["timestamp [ns]"])));
-  return first ? toNumber(first["timestamp [ns]"]) : Date.now() * 1e6;
-}
+async function loadSampleData(key) {
+  const config = SAMPLE_DATASETS[key];
+  if (!config) return;
+  try {
+    const paths = {
+      gaze: `${config.base}gaze.csv`,
+      saccades: `${config.base}saccades.csv`,
+      blinks: `${config.base}blinks.csv`,
+      events: `${config.base}events.csv`,
+      world: `${config.base}world_timestamps.csv`,
+      info: `${config.base}info.json`,
+    };
+    const [gazeText, saccadesText, blinksText, eventsText, worldText, infoText] = await Promise.all([
+      fetch(paths.gaze).then(assertOk).then((r) => r.text()),
+      fetch(paths.saccades).then((r) => (r.ok ? r.text() : "")),
+      fetch(paths.blinks).then((r) => (r.ok ? r.text() : "")),
+      fetch(paths.events).then((r) => (r.ok ? r.text() : "")),
+      fetch(paths.world).then((r) => (r.ok ? r.text() : "")),
+      fetch(paths.info).then((r) => (r.ok ? r.text() : "{}")),
+    ]);
 
-function normalizeGaze(rows) {
-  return rows
-    .map((row, index) => {
-      const timestampNs = toNumber(row["timestamp [ns]"]);
-      const azimuthDeg = toNumber(row["azimuth [deg]"]);
-      const elevationDeg = toNumber(row["elevation [deg]"]);
-      const xPx = toNumber(row["gaze x [px]"]);
-      const yPx = toNumber(row["gaze y [px]"]);
-      return {
-        index,
-        timestampNs,
-        t: (timestampNs - state.t0Ns) / 1e9,
-        azimuthDeg,
-        elevationDeg,
-        xPx,
-        yPx,
-        worn: row.worn !== "0",
-        blinkId: row["blink id"] || "",
-        fixationId: row["fixation id"] || "",
-        valid: Number.isFinite(timestampNs) && Number.isFinite(azimuthDeg) && row.worn !== "0",
-        vxDeg: NaN,
-        excluded: false,
-        inSaccade: false,
-        inBlink: false,
-      };
-    })
-    .filter((sample) => Number.isFinite(sample.t))
-    .sort((a, b) => a.t - b.t);
-}
-
-function normalizeIntervals(rows, kind) {
-  return rows
-    .map((row) => {
-      const startNs = toNumber(row["start timestamp [ns]"]);
-      const endNs = toNumber(row["end timestamp [ns]"]);
-      const id = row[`${kind} id`] || row.id || "";
-      return {
-        id,
-        startNs,
-        endNs,
-        start: (startNs - state.t0Ns) / 1e9,
-        end: (endNs - state.t0Ns) / 1e9,
-        durationMs: toNumber(row["duration [ms]"]),
-        amplitudeDeg: toNumber(row["amplitude [deg]"]),
-        peakVelocity: toNumber(row["peak velocity [px/s]"]),
-      };
-    })
-    .filter((interval) => Number.isFinite(interval.start) && Number.isFinite(interval.end))
-    .sort((a, b) => a.start - b.start);
-}
-
-function normalizeEvents(rows) {
-  return rows
-    .map((row) => {
-      const timestampNs = toNumber(row["timestamp [ns]"]);
-      return {
-        recordingId: row["recording id"] || "",
-        timestampNs,
-        t: (timestampNs - state.t0Ns) / 1e9,
-        name: row.name || "",
-        type: row.type || "",
-      };
-    })
-    .filter((event) => Number.isFinite(event.t))
-    .sort((a, b) => a.t - b.t);
-}
-
-function normalizeWorldTimestamps(rows) {
-  return rows
-    .map((row, index) => {
-      const timestampNs = toNumber(row["timestamp [ns]"]);
-      return {
-        index,
-        timestampNs,
-        t: (timestampNs - state.t0Ns) / 1e9,
-      };
-    })
-    .filter((frame) => Number.isFinite(frame.t))
-    .sort((a, b) => a.t - b.t);
-}
-
-function buildVelocity() {
-  const gaze = state.gaze;
-  const radius = 2;
-
-  for (let i = 0; i < gaze.length; i += 1) {
-    const left = gaze[Math.max(0, i - radius)];
-    const right = gaze[Math.min(gaze.length - 1, i + radius)];
-    const dt = right.t - left.t;
-    if (dt <= 0 || !left.valid || !right.valid) {
-      gaze[i].vxDeg = NaN;
-    } else {
-      gaze[i].vxDeg = (right.azimuthDeg - left.azimuthDeg) / dt;
+    const gazeRows = parseCSV(gazeText);
+    const info = JSON.parse(infoText || "{}");
+    state.sourceName = config.label;
+    state.info = info;
+    state.t0Ns = getRecordingStartNs(info, gazeRows);
+    state.gaze = parseGazeRows(gazeRows, state.t0Ns);
+    state.saccades = saccadesText ? parseIntervals(parseCSV(saccadesText), state.t0Ns, "saccade") : [];
+    state.blinks = blinksText ? parseIntervals(parseCSV(blinksText), state.t0Ns, "blink") : [];
+    state.events = eventsText ? parseEvents(parseCSV(eventsText)) : [];
+    state.worldTimestamps = worldText ? parseWorldTimestamps(parseCSV(worldText)) : [];
+    state.trials = [];
+    state.results = [];
+    state.summaries = [];
+    state.pendingVideoSrc = config.video ? `${config.base}${config.video}` : "";
+    clearVideoObjectUrl();
+    if (state.pendingVideoSrc) {
+      el.stimulusVideo.src = state.pendingVideoSrc;
     }
+    setStatus("ready", `${config.label} caricato`, `${state.gaze.length.toLocaleString("it-IT")} campioni gaze disponibili.`);
+    renderAll();
+    renderVideoOverlay();
+  } catch (error) {
+    console.error(error);
+    setStatus("bad", `${config.label} non raggiungibile`, "Importa manualmente la cartella con i file dati.");
   }
 }
 
-function flagExcludedSamples() {
-  const settings = getSettings();
-  const paddedSaccades = state.saccades.map((interval) => ({
-    start: interval.start - settings.saccadePaddingMs / 1000,
-    end: interval.end + settings.saccadePaddingMs / 1000,
-  }));
-  const blinks = state.blinks.map((interval) => ({
-    start: interval.start,
-    end: interval.end,
-  }));
+function assertOk(response) {
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response;
+}
 
-  for (const sample of state.gaze) {
-    const inSaccade = isInsideAny(sample.t, paddedSaccades);
-    const inBlink = Boolean(sample.blinkId) || isInsideAny(sample.t, blinks);
-    sample.inSaccade = inSaccade;
-    sample.inBlink = inBlink;
-    sample.excluded = !sample.valid || inSaccade || inBlink;
+function getRecordingStartNs(info, gazeRows) {
+  const candidates = [
+    info?.recording_start_time_ns,
+    info?.start_time_synced_s ? Number(info.start_time_synced_s) * 1e9 : undefined,
+    gazeRows?.[0]?.recording_time_nanoseconds,
+    gazeRows?.[0]?.timestamp_ns,
+    gazeRows?.[0]?.gaze_timestamp_ns,
+  ];
+  for (const candidate of candidates) {
+    const value = toNumber(candidate);
+    if (Number.isFinite(value) && value > 1e6) return value;
+  }
+  return null;
+}
+
+function parseGazeRows(rows, t0Ns) {
+  const parsed = rows.map((row, index) => {
+    const rawTime = firstFinite([
+      row.recording_time_nanoseconds,
+      row.timestamp_ns,
+      row.gaze_timestamp_ns,
+      row.timestamp,
+      row.time,
+      row.t,
+      row.gaze_timestamp,
+    ]);
+    let t;
+    if (Number.isFinite(rawTime)) {
+      if (rawTime > 1e9 && t0Ns) t = (rawTime - t0Ns) / 1e9;
+      else if (rawTime > 1e6) t = rawTime / 1e9;
+      else t = rawTime;
+    } else {
+      const frequency = toNumber(row.gaze_frequency) || 200;
+      t = index / frequency;
+    }
+
+    const xNorm = firstFinite([
+      row.norm_pos_x,
+      row.x_norm,
+      row.gaze_normal0_x,
+      row.gaze_point_3d_x,
+      row.x,
+    ]);
+    const yNorm = firstFinite([
+      row.norm_pos_y,
+      row.y_norm,
+      row.gaze_normal0_y,
+      row.gaze_point_3d_y,
+      row.y,
+    ]);
+    const sceneX = firstFinite([row.scene_camera_frame_pixel_x, row.gaze_point_2d_x, row.x_px, row.pixel_x]);
+    const sceneY = firstFinite([row.scene_camera_frame_pixel_y, row.gaze_point_2d_y, row.y_px, row.pixel_y]);
+    const azimuth = firstFinite([
+      row.azimuth_deg,
+      row.azimuth,
+      row.theta_deg,
+      row.gaze_angle_x,
+      row.gaze_angle_deg_x,
+    ]);
+    const elevation = firstFinite([
+      row.elevation_deg,
+      row.elevation,
+      row.phi_deg,
+      row.gaze_angle_y,
+      row.gaze_angle_deg_y,
+    ]);
+
+    return {
+      t,
+      xNorm,
+      yNorm,
+      sceneX,
+      sceneY,
+      azimuthDeg: Number.isFinite(azimuth) ? azimuth : normToAzimuth(xNorm),
+      elevationDeg: Number.isFinite(elevation) ? elevation : normToElevation(yNorm),
+      excluded: false,
+      vxDeg: NaN,
+    };
+  }).filter((sample) => Number.isFinite(sample.t)).sort((a, b) => a.t - b.t);
+
+  computeVelocities(parsed);
+  markExcluded(parsed);
+  return parsed;
+}
+
+function firstFinite(values) {
+  for (const value of values) {
+    const parsed = toNumber(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return NaN;
+}
+
+function normToAzimuth(x) {
+  if (!Number.isFinite(x)) return NaN;
+  return (x - 0.5) * 60;
+}
+
+function normToElevation(y) {
+  if (!Number.isFinite(y)) return NaN;
+  return (0.5 - y) * 36;
+}
+
+function computeVelocities(samples) {
+  for (let i = 1; i < samples.length - 1; i += 1) {
+    const prev = samples[i - 1];
+    const next = samples[i + 1];
+    const dt = next.t - prev.t;
+    samples[i].vxDeg = dt > 0 ? (next.azimuthDeg - prev.azimuthDeg) / dt : NaN;
   }
 }
 
-function isInsideAny(t, intervals) {
-  return intervals.some((interval) => t >= interval.start && t <= interval.end);
+function parseIntervals(rows, t0Ns, kind) {
+  return rows.map((row) => {
+    const startRaw = firstFinite([row.start_time, row.start_timestamp, row.start_time_ns, row.start_timestamp_ns]);
+    const endRaw = firstFinite([row.end_time, row.end_timestamp, row.end_time_ns, row.end_timestamp_ns]);
+    const start = normalizeTime(startRaw, t0Ns);
+    const end = normalizeTime(endRaw, t0Ns);
+    return { start, end, kind };
+  }).filter((interval) => Number.isFinite(interval.start) && Number.isFinite(interval.end) && interval.end >= interval.start);
 }
 
-function getSamplesBetween(start, end, options = {}) {
-  const allowExcluded = Boolean(options.allowExcluded);
-  return state.gaze.filter((sample) => {
-    if (sample.t < start || sample.t > end) return false;
-    if (!allowExcluded && sample.excluded) return false;
-    return sample.valid;
-  });
+function normalizeTime(value, t0Ns) {
+  if (!Number.isFinite(value)) return NaN;
+  if (value > 1e9 && t0Ns) return (value - t0Ns) / 1e9;
+  if (value > 1e6) return value / 1e9;
+  return value;
 }
 
-function handleTrialImport(event) {
+function parseEvents(rows) {
+  return rows.map((row) => ({
+    t: firstFinite([row.timestamp, row.time, row.t, row.recording_time_s, row.recording_time]),
+    name: row.name || row.label || row.event || row.type || "event",
+  })).filter((event) => Number.isFinite(event.t));
+}
+
+function parseWorldTimestamps(rows) {
+  return rows.map((row, index) => ({
+    frame: toNumber(row.frame_idx ?? row.frame ?? index),
+    t: firstFinite([row.timestamp, row.time, row.t, row.recording_time_s]),
+  })).filter((entry) => Number.isFinite(entry.t));
+}
+
+function markExcluded(samples) {
+  const padding = getSettings().saccadePaddingMs / 1000;
+  for (const sample of samples) {
+    sample.excluded = state.blinks.some((blink) => sample.t >= blink.start - padding && sample.t <= blink.end + padding)
+      || state.saccades.some((saccade) => sample.t >= saccade.start - padding && sample.t <= saccade.end + padding);
+  }
+}
+
+async function handleTrialImport(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  file.text().then((text) => {
-    const rows = parseCSV(text);
-    const imported = rows.map((row, index) => trialFromRow(row, index)).filter(Boolean);
-    if (!imported.length) {
-      setStatus("error", "CSV trial non valido", "Servono colonne come onset_s, direction, distance_cm/distance.");
-      return;
-    }
-    state.trials = imported;
-    analyze();
-    renderAll();
-    setStatus("ready", "Trial importati", `${imported.length} trial letti da ${file.name}.`);
-  });
+  const rows = parseCSV(await readFileAsText(file));
+  state.trials = rows.map((row, index) => ({
+    onset: firstFinite([row.onset_s, row.onset, row.time, row.t]),
+    direction: normalizeDirection(row.direction || row.direzione),
+    distanceKind: normalizeDistance(row.distance || row.distanza || row.distanceKind),
+    source: `csv:${index + 1}`,
+  })).filter((trial) => Number.isFinite(trial.onset));
+  analyze();
+  renderAll();
 }
 
-function trialFromRow(row, index) {
-  const onsetCandidates = [
-    row.onset_s,
-    row.motion_onset_s,
-    row.start_s,
-    row["onset [s]"],
-    row["motion onset [s]"],
-  ];
-  const timestampNs = toNumber(row.timestamp_ns || row["timestamp [ns]"]);
-  let onset = onsetCandidates.map(toNumber).find(Number.isFinite);
-  if (!Number.isFinite(onset) && Number.isFinite(timestampNs)) onset = (timestampNs - state.t0Ns) / 1e9;
-  if (!Number.isFinite(onset)) return null;
+function normalizeDirection(value) {
+  const text = String(value || "").toLowerCase();
+  if (["right", "destra", "dx", "r"].includes(text)) return "right";
+  return "left";
+}
 
-  const rawDirection = String(row.direction || row.direzione || row.dir || "").toLowerCase();
-  const direction = rawDirection.startsWith("r") || rawDirection.startsWith("d") ? "right" : "left";
+function normalizeDistance(value) {
+  const text = String(value || "").toLowerCase();
+  if (["far", "ampia", "lunga", "wide", "a"].includes(text)) return "far";
+  return "near";
+}
 
-  const rawDistance = String(row.distance || row.distanza || row.condition || row.condizione || "").toLowerCase();
-  const distanceCm = toNumber(row.distance_cm || row["distance [cm]"] || row.distanza_cm);
-  const settings = getSettings();
-  let distanceKind = rawDistance.includes("far") || rawDistance.includes("amp") || rawDistance.includes("long") ? "far" : "near";
-  if (Number.isFinite(distanceCm)) {
-    const nearDiff = Math.abs(distanceCm - settings.nearDistanceCm);
-    const farDiff = Math.abs(distanceCm - settings.farDistanceCm);
-    distanceKind = farDiff < nearDiff ? "far" : "near";
+function loadVideoFile(file) {
+  clearVideoObjectUrl();
+  state.videoObjectUrl = URL.createObjectURL(file);
+  el.stimulusVideo.src = state.videoObjectUrl;
+  renderVideoOverlay();
+}
+
+function handleVideoImport(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  loadVideoFile(file);
+}
+
+function clearVideoObjectUrl() {
+  if (state.videoObjectUrl) {
+    URL.revokeObjectURL(state.videoObjectUrl);
+    state.videoObjectUrl = "";
   }
-
-  return {
-    id: row.trial_id || row.id || `trial-${index + 1}`,
-    onset,
-    direction,
-    distanceKind,
-    durationMs: toNumber(row.duration_ms || row["duration [ms]"]) || settings.durationMs,
-    source: "import",
-    digit: row.digit || row.cifra || "",
-    correct: row.correct || row.accuracy || "",
-  };
+  el.stimulusVideo.removeAttribute("src");
+  el.stimulusVideo.load();
 }
 
 function addManualTrial() {
-  const onset = Number(el.newOnset.value);
+  const onset = numberFromInput(el.newOnset, NaN);
   if (!Number.isFinite(onset)) {
-    setStatus("warn", "Onset mancante", "Inserisci il tempo di onset del movimento in secondi.");
+    setStatus("warn", "Onset mancante", "Inserisci il tempo di onset in secondi.");
     return;
   }
-
   state.trials.push({
-    id: `manual-${Date.now()}`,
     onset,
     direction: el.newDirection.value,
     distanceKind: el.newDistanceKind.value,
-    durationMs: getSettings().durationMs,
     source: "manual",
   });
-
-  el.newOnset.value = "";
   analyze();
   renderAll();
 }
 
 function addVideoTrial() {
-  const onset = videoTimeToRecordingTime();
-  if (!Number.isFinite(onset)) {
-    setStatus(
-      "warn",
-      "Video non sincronizzato",
-      "Carica il video e world_timestamps.csv, poi porta il video sul frame di onset del movimento."
-    );
-    return;
-  }
-
-  state.trials.push({
-    id: `video-${Date.now()}`,
-    onset,
-    direction: el.newDirection.value,
-    distanceKind: el.newDistanceKind.value,
-    durationMs: getSettings().durationMs,
-    source: "video",
-  });
-
-  analyze();
-  renderAll();
-  setStatus("ready", "Onset aggiunto dal video", `Trial inserito a ${onset.toFixed(3)} s sul tempo gaze.`);
+  const recordingTime = currentRecordingTimeFromVideo();
+  if (!Number.isFinite(recordingTime)) return;
+  el.newOnset.value = recordingTime.toFixed(3);
+  addManualTrial();
 }
 
-function videoTimeToRecordingTime() {
-  const video = el.stimulusVideo;
-  if (!Number.isFinite(video.currentTime)) return NaN;
-  if (!state.worldTimestamps.length) return NaN;
-
-  const first = state.worldTimestamps[0];
-  return first.t + video.currentTime + numberFromInput(el.syncOffsetMs, 0) / 1000;
-}
-
-function recordingTimeToVideoTime(recordingTime) {
-  const video = el.stimulusVideo;
-  if (!Number.isFinite(recordingTime)) return NaN;
-  if (!state.worldTimestamps.length) return NaN;
-
-  const first = state.worldTimestamps[0];
-  return recordingTime - first.t - numberFromInput(el.syncOffsetMs, 0) / 1000;
+function currentRecordingTimeFromVideo() {
+  if (!el.stimulusVideo.duration) return NaN;
+  return el.stimulusVideo.currentTime + numberFromInput(el.syncOffsetMs, 0) / 1000;
 }
 
 function seekVideoToRecordingTime(recordingTime) {
-  const videoTime = recordingTimeToVideoTime(recordingTime);
-  if (!Number.isFinite(videoTime) || !el.stimulusVideo.src) return false;
-
-  const maxTime = Number.isFinite(el.stimulusVideo.duration) ? el.stimulusVideo.duration : videoTime;
-  const nextTime = clamp(videoTime, 0, maxTime);
-  el.traceCanvas.dataset.lastSeekVideoTime = nextTime.toFixed(3);
-
-  try {
-    if (typeof el.stimulusVideo.fastSeek === "function") {
-      el.stimulusVideo.fastSeek(nextTime);
-    }
-    el.stimulusVideo.currentTime = nextTime;
-  } catch (error) {
-    el.stimulusVideo.currentTime = nextTime;
-  }
-
-  requestAnimationFrame(() => {
-    updateVideoTimeLabels();
-    renderTrace();
-  });
-  return true;
+  if (!el.stimulusVideo.duration) return;
+  const videoTime = recordingTime - numberFromInput(el.syncOffsetMs, 0) / 1000;
+  el.stimulusVideo.currentTime = clamp(videoTime, 0, el.stimulusVideo.duration);
 }
 
 function stepVideoFrame(direction) {
-  const video = el.stimulusVideo;
-  const frameStep = estimateFrameDuration();
-  if (!Number.isFinite(frameStep)) return;
-  video.pause();
-  video.currentTime = Math.max(0, video.currentTime + direction * frameStep);
+  if (!el.stimulusVideo.duration) return;
+  const fps = estimateVideoFps();
+  el.stimulusVideo.pause();
+  el.stimulusVideo.currentTime = clamp(el.stimulusVideo.currentTime + direction / fps, 0, el.stimulusVideo.duration);
   updateVideoTimeLabels();
   renderTrace();
+  renderVideoOverlay();
 }
 
-function estimateFrameDuration() {
+function estimateVideoFps() {
   if (state.worldTimestamps.length > 2) {
-    const deltas = [];
-    for (let i = 1; i < Math.min(state.worldTimestamps.length, 80); i += 1) {
-      const delta = state.worldTimestamps[i].t - state.worldTimestamps[i - 1].t;
-      if (delta > 0) deltas.push(delta);
+    const diffs = [];
+    for (let i = 1; i < Math.min(state.worldTimestamps.length, 120); i += 1) {
+      const dt = state.worldTimestamps[i].t - state.worldTimestamps[i - 1].t;
+      if (dt > 0 && dt < 1) diffs.push(dt);
     }
-    return median(deltas);
+    const med = median(diffs);
+    if (Number.isFinite(med) && med > 0) return 1 / med;
   }
-  if (Number.isFinite(el.stimulusVideo.duration) && el.stimulusVideo.duration > 0) return 1 / 20;
-  return NaN;
+  return 30;
 }
 
 function updateVideoTimeLabels() {
-  const videoTime = el.stimulusVideo.currentTime;
-  const gazeTime = videoTimeToRecordingTime();
-  el.videoTimeLabel.textContent = Number.isFinite(videoTime) ? `${videoTime.toFixed(3)} s` : "-";
-  el.gazeTimeLabel.textContent = Number.isFinite(gazeTime) ? `${gazeTime.toFixed(3)} s` : "-";
+  el.videoTimeLabel.textContent = Number.isFinite(el.stimulusVideo.currentTime) ? `${el.stimulusVideo.currentTime.toFixed(3)} s` : "-";
+  const recordingTime = currentRecordingTimeFromVideo();
+  el.gazeTimeLabel.textContent = Number.isFinite(recordingTime) ? `${recordingTime.toFixed(3)} s` : "-";
   renderVideoOverlay();
+}
+
+function startPlaybackCursor() {
+  stopPlaybackCursor();
+  const tick = () => {
+    updateVideoTimeLabels();
+    renderTrace();
+    playbackAnimationId = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function stopPlaybackCursor() {
+  if (playbackAnimationId) cancelAnimationFrame(playbackAnimationId);
+  playbackAnimationId = null;
+  updateVideoTimeLabels();
+  renderTrace();
+  renderVideoOverlay();
+}
+
+function handleVideoOverlayClick(event) {
+  if (!el.stimulusVideo.videoWidth || !el.stimulusVideo.videoHeight) return;
+  const rect = el.videoOverlayCanvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const contentRect = getVideoContentRect();
+  const point = overlayToScenePoint(x, y, contentRect);
+  if (!point) return;
+  if (state.markingCenter) {
+    state.targetCenter = point;
+    state.markingCenter = false;
+    el.videoStage.classList.remove("marking");
+    setStatus("ready", "Puntino centrale salvato", `x ${point.x.toFixed(0)}, y ${point.y.toFixed(0)}.`);
+    renderVideoOverlay();
+  }
 }
 
 function renderVideoOverlay() {
   const canvas = el.videoOverlayCanvas;
-  const video = el.stimulusVideo;
-  if (!canvas || !video) return;
-
   const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(1, Math.round(rect.width * dpr));
-  const height = Math.max(1, Math.round(rect.height * dpr));
-
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-
+  const pixelRatio = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(rect.width * pixelRatio));
+  canvas.height = Math.max(1, Math.round(rect.height * pixelRatio));
   const context = canvas.getContext("2d");
-  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, rect.width, rect.height);
 
-  const contentRect = getVideoContentRect(rect.width, rect.height);
-  drawVideoContentBorder(context, contentRect);
+  if (!el.stimulusVideo.videoWidth || !el.stimulusVideo.videoHeight) {
+    el.targetCenterLabel.textContent = state.targetCenter ? `${state.targetCenter.x.toFixed(0)}, ${state.targetCenter.y.toFixed(0)}` : "-";
+    el.gazePointLabel.textContent = "-";
+    return;
+  }
 
+  const contentRect = getVideoContentRect();
+  drawVideoContentBorder(context, contentRect);
   if (state.targetCenter) {
-    const target = sceneToOverlayPoint(state.targetCenter.x, state.targetCenter.y, contentRect);
-    drawMarker(context, target.x, target.y, "#d84848", "P");
-    el.targetCenterLabel.textContent = `${Math.round(state.targetCenter.x)}, ${Math.round(state.targetCenter.y)} px`;
+    const point = sceneToOverlayPoint(state.targetCenter.x, state.targetCenter.y, contentRect);
+    drawMarker(context, point.x, point.y, "#f5b041", "P");
+    el.targetCenterLabel.textContent = `${state.targetCenter.x.toFixed(0)}, ${state.targetCenter.y.toFixed(0)}`;
   } else {
     el.targetCenterLabel.textContent = "-";
   }
 
-  const gazeTime = videoTimeToRecordingTime();
-  const gaze = nearestGazeSample(gazeTime);
-  if (gaze && Number.isFinite(gaze.xPx) && Number.isFinite(gaze.yPx)) {
-    const point = sceneToOverlayPoint(gaze.xPx, gaze.yPx, contentRect);
-    drawMarker(context, point.x, point.y, "#0b8f83", "G");
-    el.gazePointLabel.textContent = `${Math.round(gaze.xPx)}, ${Math.round(gaze.yPx)} px`;
-
-    if (state.targetCenter) {
-      const target = sceneToOverlayPoint(state.targetCenter.x, state.targetCenter.y, contentRect);
-      context.strokeStyle = "rgba(11,143,131,0.55)";
-      context.lineWidth = 1.5;
-      context.setLineDash([5, 5]);
-      context.beginPath();
-      context.moveTo(target.x, target.y);
-      context.lineTo(point.x, point.y);
-      context.stroke();
-      context.setLineDash([]);
-    }
+  const recordingTime = currentRecordingTimeFromVideo();
+  const gaze = Number.isFinite(recordingTime) ? nearestGazeSample(recordingTime) : null;
+  const gazePoint = gazeToScenePoint(gaze, contentRect.videoWidth, contentRect.videoHeight);
+  if (gazePoint) {
+    const overlayPoint = sceneToOverlayPoint(gazePoint.x, gazePoint.y, contentRect);
+    drawMarker(context, overlayPoint.x, overlayPoint.y, "#4aa3df", "G");
+    el.gazePointLabel.textContent = `${gazePoint.x.toFixed(0)}, ${gazePoint.y.toFixed(0)}`;
   } else {
     el.gazePointLabel.textContent = "-";
   }
 }
 
-function getVideoContentRect(stageWidth, stageHeight) {
+function gazeToScenePoint(gaze, videoWidth, videoHeight) {
+  if (!gaze) return null;
+  if (Number.isFinite(gaze.sceneX) && Number.isFinite(gaze.sceneY)) return { x: gaze.sceneX, y: gaze.sceneY };
+  if (Number.isFinite(gaze.xNorm) && Number.isFinite(gaze.yNorm)) return { x: gaze.xNorm * videoWidth, y: (1 - gaze.yNorm) * videoHeight };
+  if (Number.isFinite(gaze.azimuthDeg) && Number.isFinite(gaze.elevationDeg)) {
+    return {
+      x: (gaze.azimuthDeg / 60 + 0.5) * videoWidth,
+      y: (0.5 - gaze.elevationDeg / 36) * videoHeight,
+    };
+  }
+  return null;
+}
+
+function getVideoContentRect() {
+  const rect = el.videoStage.getBoundingClientRect();
+  const stageWidth = rect.width;
+  const stageHeight = rect.height;
   const videoWidth = el.stimulusVideo.videoWidth || 1600;
   const videoHeight = el.stimulusVideo.videoHeight || 1200;
   const scale = Math.min(stageWidth / videoWidth, stageHeight / videoHeight);
@@ -779,524 +745,95 @@ function clearTargetCenter() {
   renderVideoOverlay();
 }
 
-function calibrationPairCount() {
-  return CALIBRATION_ORDER.filter((key) => state.calibrationTargets[key] && state.calibrationFixations[key]).length;
-}
-
-function filteredCalibrationFixations() {
-  const start = numberFromInput(el.calibrationStartS, 0);
-  const end = numberFromInput(el.calibrationEndS, 35);
-  const lo = Math.min(start, end);
-  const hi = Math.max(start, end);
-  return state.fixations.filter((fixation) => fixation.t >= lo && fixation.t <= hi);
-}
-
-function selectedCalibrationKeyForFixation(fixationId) {
-  return CALIBRATION_ORDER.find((key) => state.calibrationFixations[key]?.id === fixationId) || null;
-}
-
-function nearestCalibrationFixation(point) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const fixation of filteredCalibrationFixations()) {
-    const dx = fixation.xPx - point.x;
-    const dy = fixation.yPx - point.y;
-    const distance = Math.hypot(dx, dy);
-    const threshold = Math.max(28, 12 + fixation.durationMs / 120);
-    if (distance <= threshold && distance < bestDist) {
-      best = fixation;
-      bestDist = distance;
-    }
-  }
-  return best;
-}
-
-function setCalibrationMode(mode) {
-  state.calibrationMode = mode;
-  state.markingCenter = false;
-  el.videoStage.classList.toggle("marking", mode === "target" || mode === "fixation");
-  updateCalibrationUi();
-  renderVideoOverlay();
-}
-
-function nextCalibrationPoint(current) {
-  const index = CALIBRATION_ORDER.indexOf(current);
-  return CALIBRATION_ORDER[(index + 1) % CALIBRATION_ORDER.length];
-}
-
-function updateCalibrationUi() {
-  if (!el.calibrationPointSelect.options.length) initializeCalibrationSelect();
-  el.calibrationPointSelect.value = state.activeCalibrationPoint;
-  const count = calibrationPairCount();
-  const modelText = state.calibrationModel ? ` | modello ${state.calibrationModel.type}` : "";
-  el.calibrationStatus.textContent = `${count}/9${modelText}`;
-  el.calibrationTargetModeBtn.classList.toggle("active", state.calibrationMode === "target");
-  el.calibrationFixationModeBtn.classList.toggle("active", state.calibrationMode === "fixation");
-  el.fitCalibrationBtn.disabled = count < 4;
-
-  const activeLabel = CALIBRATION_POINT_LABELS[state.activeCalibrationPoint] || state.activeCalibrationPoint;
-  el.calibrationHint.textContent = state.calibrationMode === "target"
-    ? `Punto attivo: ${activeLabel}. Clicca nel video la posizione reale del target di taratura.`
-    : `Punto attivo: ${activeLabel}. Clicca il cerchio arancione della fissazione corrispondente.`;
-}
-
-function initializeCalibrationSelect() {
-  el.calibrationPointSelect.innerHTML = "";
-  CALIBRATION_ORDER.forEach((key, index) => {
-    const option = document.createElement("option");
-    option.value = key;
-    option.textContent = `${index + 1}. ${CALIBRATION_POINT_LABELS[key]}`;
-    el.calibrationPointSelect.appendChild(option);
-  });
-}
-
-function clearCalibration(options = {}) {
-  state.calibrationTargets = {};
-  state.calibrationFixations = {};
-  state.calibrationModel = null;
-  state.activeCalibrationPoint = CALIBRATION_ORDER[0];
-  state.calibrationMode = "target";
-  state.markingCenter = false;
-  if (el.videoStage) el.videoStage.classList.remove("marking");
-  if (!options.silent) setStatus("ready", "Taratura cancellata", "La sovrapposizione dello sguardo usa di nuovo le coordinate grezze.");
-  updateCalibrationUi();
-  renderVideoOverlay();
-}
-
-function fitCalibrationFromPairs() {
-  const pairs = CALIBRATION_ORDER
-    .map((key) => ({
-      key,
-      observed: state.calibrationFixations[key],
-      actual: state.calibrationTargets[key],
-    }))
-    .filter((pair) => pair.observed && pair.actual);
-
-  if (pairs.length < 4) {
-    setStatus("warn", "Taratura incompleta", "Servono almeno 4 coppie target/fissazione, meglio 6-9.");
+function suggestTrialsFromEvents() {
+  if (!state.events.length) {
+    setStatus("warn", "Nessun events.csv", "Importa events.csv oppure inserisci i trial manualmente.");
     return;
   }
-
-  const src = pairs.map((pair) => ({ x: pair.observed.xPx, y: pair.observed.yPx }));
-  const dst = pairs.map((pair) => ({ x: pair.actual.x, y: pair.actual.y }));
-  const model = fitCalibrationModel(src, dst);
-  const corrected = applyCalibrationModel(model, src);
-  const errors = corrected.map((point, index) => Math.hypot(point.x - dst[index].x, point.y - dst[index].y));
-  model.rmse = Math.sqrt(mean(errors.map((value) => value * value)));
-  model.pairs = pairs.map((pair, index) => ({
-    key: pair.key,
-    label: CALIBRATION_POINT_LABELS[pair.key],
-    fixationId: pair.observed.id,
-    durationMs: pair.observed.durationMs,
-    observed: src[index],
-    actual: dst[index],
-    errorPx: errors[index],
+  const suggested = state.events.map((event, index) => ({
+    onset: event.t,
+    direction: index % 2 === 0 ? "left" : "right",
+    distanceKind: index % 4 < 2 ? "near" : "far",
+    source: event.name,
   }));
-
-  state.calibrationModel = model;
-  updateCalibrationUi();
-  renderVideoOverlay();
-  setStatus(
-    "ready",
-    "Taratura applicata",
-    `${pairs.length} coppie, modello ${model.type}, errore medio ${formatNumber(model.rmse, 1)} px.`
-  );
-}
-
-function fitCalibrationModel(src, dst) {
-  if (src.length >= 6) {
-    try {
-      return fitThinPlateSpline(src, dst);
-    } catch (error) {
-      console.warn("TPS non riuscita, uso affine.", error);
-    }
-  }
-  return fitAffineCalibration(src, dst);
-}
-
-function fitAffineCalibration(src, dst) {
-  const normal = Array.from({ length: 3 }, () => Array(3).fill(0));
-  const rhsX = Array(3).fill(0);
-  const rhsY = Array(3).fill(0);
-
-  src.forEach((point, index) => {
-    const row = [point.x, point.y, 1];
-    for (let r = 0; r < 3; r += 1) {
-      rhsX[r] += row[r] * dst[index].x;
-      rhsY[r] += row[r] * dst[index].y;
-      for (let c = 0; c < 3; c += 1) normal[r][c] += row[r] * row[c];
-    }
-  });
-
-  return {
-    type: "affine",
-    coeffX: solveLinearSystem(normal.map((row) => row.slice()), rhsX.slice()),
-    coeffY: solveLinearSystem(normal.map((row) => row.slice()), rhsY.slice()),
-  };
-}
-
-function fitThinPlateSpline(src, dst) {
-  const n = src.length;
-  const size = n + 3;
-  const matrix = Array.from({ length: size }, () => Array(size).fill(0));
-  const rhsX = Array(size).fill(0);
-  const rhsY = Array(size).fill(0);
-  const lambda = 1e-3;
-
-  for (let i = 0; i < n; i += 1) {
-    for (let j = 0; j < n; j += 1) {
-      const dx = src[i].x - src[j].x;
-      const dy = src[i].y - src[j].y;
-      matrix[i][j] = tpsKernel(dx * dx + dy * dy);
-    }
-    matrix[i][i] += lambda;
-    matrix[i][n] = 1;
-    matrix[i][n + 1] = src[i].x;
-    matrix[i][n + 2] = src[i].y;
-    matrix[n][i] = 1;
-    matrix[n + 1][i] = src[i].x;
-    matrix[n + 2][i] = src[i].y;
-    rhsX[i] = dst[i].x;
-    rhsY[i] = dst[i].y;
-  }
-
-  return {
-    type: "tps",
-    src: src.map((point) => ({ ...point })),
-    paramsX: solveLinearSystem(matrix.map((row) => row.slice()), rhsX.slice()),
-    paramsY: solveLinearSystem(matrix.map((row) => row.slice()), rhsY.slice()),
-  };
-}
-
-function tpsKernel(r2) {
-  return r2 > 1e-12 ? r2 * Math.log(r2) : 0;
-}
-
-function solveLinearSystem(matrix, rhs) {
-  const n = rhs.length;
-  for (let col = 0; col < n; col += 1) {
-    let pivot = col;
-    for (let row = col + 1; row < n; row += 1) {
-      if (Math.abs(matrix[row][col]) > Math.abs(matrix[pivot][col])) pivot = row;
-    }
-    if (Math.abs(matrix[pivot][col]) < 1e-10) throw new Error("Sistema di taratura singolare");
-    [matrix[col], matrix[pivot]] = [matrix[pivot], matrix[col]];
-    [rhs[col], rhs[pivot]] = [rhs[pivot], rhs[col]];
-
-    const pivotValue = matrix[col][col];
-    for (let c = col; c < n; c += 1) matrix[col][c] /= pivotValue;
-    rhs[col] /= pivotValue;
-
-    for (let row = 0; row < n; row += 1) {
-      if (row === col) continue;
-      const factor = matrix[row][col];
-      if (factor === 0) continue;
-      for (let c = col; c < n; c += 1) matrix[row][c] -= factor * matrix[col][c];
-      rhs[row] -= factor * rhs[col];
-    }
-  }
-  return rhs;
-}
-
-function applyCalibrationModel(model, points) {
-  if (!model) return points;
-  if (model.type === "tps") {
-    const n = model.src.length;
-    return points.map((point) => {
-      let x = model.paramsX[n] + model.paramsX[n + 1] * point.x + model.paramsX[n + 2] * point.y;
-      let y = model.paramsY[n] + model.paramsY[n + 1] * point.x + model.paramsY[n + 2] * point.y;
-      for (let i = 0; i < n; i += 1) {
-        const dx = point.x - model.src[i].x;
-        const dy = point.y - model.src[i].y;
-        const basis = tpsKernel(dx * dx + dy * dy);
-        x += model.paramsX[i] * basis;
-        y += model.paramsY[i] * basis;
-      }
-      return { x, y };
-    });
-  }
-
-  return points.map((point) => ({
-    x: model.coeffX[0] * point.x + model.coeffX[1] * point.y + model.coeffX[2],
-    y: model.coeffY[0] * point.x + model.coeffY[1] * point.y + model.coeffY[2],
-  }));
-}
-
-function handleVideoOverlayClick(event) {
-  const rect = el.videoOverlayCanvas.getBoundingClientRect();
-  const contentRect = getVideoContentRect(rect.width, rect.height);
-  const point = overlayToScenePoint(event.clientX - rect.left, event.clientY - rect.top, contentRect);
-  if (!point) return;
-
-  if (!state.markingCenter && state.calibrationMode === "target") {
-    state.calibrationTargets[state.activeCalibrationPoint] = point;
-    state.activeCalibrationPoint = nextCalibrationPoint(state.activeCalibrationPoint);
-    updateCalibrationUi();
-    renderVideoOverlay();
-    return;
-  }
-
-  if (!state.markingCenter && state.calibrationMode === "fixation") {
-    const fixation = nearestCalibrationFixation(point);
-    if (!fixation) {
-      setStatus("warn", "Nessuna fissazione vicina", "Clicca su uno dei cerchi arancioni della finestra di taratura.");
-      return;
-    }
-    for (const key of CALIBRATION_ORDER) {
-      if (state.calibrationFixations[key]?.id === fixation.id) delete state.calibrationFixations[key];
-    }
-    state.calibrationFixations[state.activeCalibrationPoint] = fixation;
-    state.activeCalibrationPoint = nextCalibrationPoint(state.activeCalibrationPoint);
-    updateCalibrationUi();
-    renderVideoOverlay();
-    return;
-  }
-
-  if (!state.markingCenter) return;
-  state.targetCenter = point;
-  state.markingCenter = false;
-  el.videoStage.classList.remove("marking");
-  renderVideoOverlay();
-  setStatus("ready", "Puntino centrale segnato", `Riferimento target a ${Math.round(point.x)}, ${Math.round(point.y)} px nel video.`);
-}
-
-function startPlaybackCursor() {
-  if (playbackAnimationId) return;
-
-  const tick = () => {
-    updateVideoTimeLabels();
-    renderTrace();
-
-    if (!el.stimulusVideo.paused && !el.stimulusVideo.ended) {
-      playbackAnimationId = requestAnimationFrame(tick);
-    } else {
-      playbackAnimationId = null;
-    }
-  };
-
-  playbackAnimationId = requestAnimationFrame(tick);
-}
-
-function stopPlaybackCursor() {
-  if (playbackAnimationId) {
-    cancelAnimationFrame(playbackAnimationId);
-    playbackAnimationId = null;
-  }
-  updateVideoTimeLabels();
-  renderTrace();
-}
-
-function handleVideoImport(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  loadVideoSource(URL.createObjectURL(file), { objectUrlOwned: true });
-}
-
-async function loadVideoSource(videoSrc, options = {}) {
-  stopPlaybackCursor();
-
-  if (state.videoObjectUrl) {
-    URL.revokeObjectURL(state.videoObjectUrl);
-    state.videoObjectUrl = "";
-  }
-
-  state.pendingVideoSrc = videoSrc;
-
-  if (!videoSrc) {
-    el.stimulusVideo.removeAttribute("src");
-    el.stimulusVideo.load();
-    updateVideoTimeLabels();
-    renderTrace();
-    return;
-  }
-
-  if (options.objectUrlOwned || videoSrc.startsWith("blob:")) {
-    state.videoObjectUrl = videoSrc;
-    el.stimulusVideo.src = videoSrc;
-    el.stimulusVideo.load();
-    updateVideoTimeLabels();
-    renderTrace();
-    return;
-  }
-
-  const encodedSrc = encodeURI(videoSrc);
-  el.stimulusVideo.src = encodedSrc;
-  el.stimulusVideo.load();
-  updateVideoTimeLabels();
-  renderTrace();
-
-  try {
-    const response = await fetch(encodedSrc);
-    if (!response.ok) throw new Error(`Video non leggibile: ${response.status}`);
-    const blob = await response.blob();
-    if (state.pendingVideoSrc !== videoSrc) return;
-    const objectUrl = URL.createObjectURL(blob);
-    state.videoObjectUrl = objectUrl;
-    el.stimulusVideo.src = objectUrl;
-    el.stimulusVideo.load();
-    updateVideoTimeLabels();
-    renderTrace();
-  } catch (error) {
-    console.warn("Uso il video via URL, il seek potrebbe essere limitato.", error);
-  }
+  state.trials = suggested;
+  analyze();
+  renderAll();
 }
 
 function suggestTrialsFromSaccades() {
-  if (!state.saccades.length || !state.gaze.length) {
-    setStatus("warn", "Nessuna saccade disponibile", "Importa anche saccades.csv oppure aggiungi i trial manualmente.");
+  if (!state.saccades.length) {
+    setStatus("warn", "Nessuna saccade", "Importa saccades.csv oppure inserisci i trial manualmente.");
     return;
   }
-
-  const settings = getSettings();
-  const nearDeg = visualAngle(settings.nearDistanceCm, settings.monitorDistanceCm);
-  const farDeg = visualAngle(settings.farDistanceCm, settings.monitorDistanceCm);
+  const minGap = 0.75;
   const candidates = [];
-
   for (const saccade of state.saccades) {
-    const before = median(getSamplesBetween(saccade.start - 0.12, saccade.start - 0.025, { allowExcluded: true }).map((sample) => sample.azimuthDeg));
-    const after = median(getSamplesBetween(saccade.end + 0.025, saccade.end + 0.12, { allowExcluded: true }).map((sample) => sample.azimuthDeg));
-    const displacement = after - before;
-    const absDisplacement = Math.abs(displacement);
-    if (!Number.isFinite(displacement) || absDisplacement < 6) continue;
-
-    const direction = displacement > 0 ? "right" : "left";
-    const distanceKind = Math.abs(absDisplacement - farDeg) < Math.abs(absDisplacement - nearDeg) ? "far" : "near";
-    const onset = Math.max(0, saccade.start - 0.2);
-
-    if (candidates.some((trial) => Math.abs(trial.onset - onset) < 0.45)) continue;
-
-    candidates.push({
-      id: `auto-${saccade.id || candidates.length + 1}`,
-      onset,
-      direction,
-      distanceKind,
-      durationMs: settings.durationMs,
-      source: "auto",
-    });
+    if (!candidates.length || saccade.start - candidates[candidates.length - 1].onset > minGap) {
+      candidates.push({
+        onset: Math.max(0, saccade.start - 0.18),
+        direction: candidates.length % 2 === 0 ? "left" : "right",
+        distanceKind: candidates.length % 4 < 2 ? "near" : "far",
+        source: "saccade",
+      });
+    }
   }
-
-  if (!candidates.length) {
-    setStatus("warn", "Nessun candidato robusto", "Non ho trovato spostamenti orizzontali ampi da cui proporre trial.");
-    return;
-  }
-
   state.trials = candidates;
   analyze();
   renderAll();
-  setStatus(
-    "warn",
-    "Trial candidati generati",
-    `${candidates.length} onset proposti dalle saccadi grandi: controllali prima di usare i risultati.`
-  );
-}
-
-function buildTrialsFromEvents() {
-  const settings = getSettings();
-  const trials = [];
-
-  for (const event of state.events) {
-    const name = event.name.toLowerCase();
-    if (!name || name.includes("recording.")) continue;
-
-    const hasLeft = /\b(left|sinistra|sx)\b/.test(name) || name.includes("_left") || name.includes("_sx");
-    const hasRight = /\b(right|destra|dx)\b/.test(name) || name.includes("_right") || name.includes("_dx");
-    if (!hasLeft && !hasRight) continue;
-
-    const hasFar = /\b(far|long|lunga|ampia)\b/.test(name) || name.includes("16");
-    const hasNear = /\b(near|short|breve|corta)\b/.test(name) || name.includes("9");
-
-    trials.push({
-      id: `event-${trials.length + 1}`,
-      onset: event.t,
-      direction: hasRight ? "right" : "left",
-      distanceKind: hasFar && !hasNear ? "far" : "near",
-      durationMs: settings.durationMs,
-      source: "events",
-    });
-  }
-
-  return trials;
-}
-
-function suggestTrialsFromEvents() {
-  const trials = buildTrialsFromEvents();
-  if (!trials.length) {
-    setStatus(
-      "warn",
-      "Nessun trial in events.csv",
-      "Gli eventi caricati non contengono direzione/distanza riconoscibili; usa annotazione manuale o CSV trial."
-    );
-    return;
-  }
-
-  state.trials = trials;
-  analyze();
-  renderAll();
-  setStatus("ready", "Trial da events.csv", `${trials.length} trial generati dai marker evento.`);
 }
 
 function analyze() {
-  flagExcludedSamples();
-  state.results = state.trials.map((trial, index) => analyzeTrial(trial, index));
+  if (!state.gaze.length || !state.trials.length) {
+    state.results = [];
+    state.summaries = [];
+    return;
+  }
+  state.results = state.trials.map((trial, index) => analyzeTrial(trial, index)).filter(Boolean);
   state.summaries = summarizeResults(state.results);
 }
 
 function analyzeTrial(trial, index) {
   const settings = getSettings();
-  const sign = directionSign(trial.direction);
-  const durationMs = trial.durationMs || settings.durationMs;
-  const durationS = durationMs / 1000;
+  const sign = trial.direction === "right" ? 1 : -1;
   const distanceCm = distanceCmFor(trial.distanceKind, settings);
   const amplitudeDeg = visualAngle(distanceCm, settings.monitorDistanceCm);
+  const durationS = settings.durationMs / 1000;
   const targetVelocityDegS = amplitudeDeg / durationS;
   const motionStart = trial.onset;
   const motionEnd = motionStart + durationS;
   const gainStart = motionStart + settings.windowStartMs / 1000;
   const gainEnd = motionStart + settings.windowEndMs / 1000;
-  const maxVelocityForGain = Math.max(180, targetVelocityDegS * 3);
+  const maxVelocityForGain = Math.max(180, targetVelocityDegS * 3.5);
 
-  const earlySamples = getSamplesBetween(gainStart, gainEnd).filter((sample) => {
-    const signedVelocity = sign * sample.vxDeg;
-    return Number.isFinite(signedVelocity) && Math.abs(sample.vxDeg) <= maxVelocityForGain;
-  });
-  const signedVelocities = earlySamples.map((sample) => sign * sample.vxDeg);
+  const baseline = median(getSamplesBetween(motionStart - settings.baselineMs / 1000, motionStart, { allowExcluded: true }).map((sample) => sample.azimuthDeg));
+  const earlySamples = getSamplesBetween(gainStart, gainEnd)
+    .filter((sample) => !sample.excluded)
+    .filter((sample) => Number.isFinite(sample.vxDeg) && Math.abs(sample.vxDeg) <= maxVelocityForGain);
+
+  const signedVelocities = earlySamples.map((sample) => sign * sample.vxDeg).filter(Number.isFinite);
   const earlyVelocity = median(signedVelocities);
   const earlyGain = earlyVelocity / targetVelocityDegS;
 
-  const baselineSamples = getSamplesBetween(
-    motionStart - settings.baselineMs / 1000,
-    motionStart,
-    { allowExcluded: true }
-  );
-  const endpointSamples = getSamplesBetween(
-    motionEnd - settings.endpointWindowMs / 1000,
-    motionEnd + settings.endpointWindowMs / 1000,
-    { allowExcluded: true }
-  );
-  const baselineAzimuth = median(baselineSamples.map((sample) => sample.azimuthDeg));
-  const endpointAzimuth = median(endpointSamples.map((sample) => sample.azimuthDeg));
-  const signedPositionChange = sign * (endpointAzimuth - baselineAzimuth);
-  const positionGain = signedPositionChange / amplitudeDeg;
-  const finalErrorDeg = amplitudeDeg - signedPositionChange;
-
-  const onsetLatencyMs = estimatePursuitLatency({
-    motionStart,
-    motionEnd,
-    sign,
-    targetVelocityDegS,
-    maxVelocityForGain,
-  });
+  const endpointSamples = getSamplesBetween(motionEnd - settings.endpointWindowMs / 1000, motionEnd + settings.endpointWindowMs / 1000)
+    .filter((sample) => !sample.excluded)
+    .map((sample) => sample.azimuthDeg);
+  const endpoint = median(endpointSamples);
+  const expectedEndpoint = Number.isFinite(baseline) ? baseline + sign * amplitudeDeg : NaN;
+  const actualDisplacement = Number.isFinite(endpoint) && Number.isFinite(baseline) ? sign * (endpoint - baseline) : NaN;
+  const positionGain = actualDisplacement / amplitudeDeg;
+  const finalErrorDeg = Number.isFinite(endpoint) && Number.isFinite(expectedEndpoint) ? endpoint - expectedEndpoint : NaN;
+  const onsetLatencyMs = estimatePursuitLatency({ motionStart, motionEnd, sign, targetVelocityDegS, maxVelocityForGain });
   const catchups = catchupMetrics(trial, motionStart, motionEnd, sign);
   const validRatio = earlySamples.length / Math.max(1, countSamplesBetween(gainStart, gainEnd));
   const quality = qualityFromSamples(earlySamples.length, validRatio, earlyGain);
 
   return {
     trialIndex: index + 1,
-    id: trial.id,
     onset: trial.onset,
     direction: trial.direction,
     distanceKind: trial.distanceKind,
-    durationMs,
+    durationMs: settings.durationMs,
     source: trial.source,
     amplitudeDeg,
     targetVelocityDegS,
@@ -1357,6 +894,18 @@ function catchupMetrics(trial, motionStart, motionEnd, sign) {
 
 function countSamplesBetween(start, end) {
   return state.gaze.filter((sample) => sample.t >= start && sample.t <= end).length;
+}
+
+function getSamplesBetween(start, end, options = {}) {
+  return state.gaze.filter((sample) => sample.t >= start && sample.t <= end && (options.allowExcluded || !sample.excluded));
+}
+
+function distanceCmFor(kind, settings) {
+  return kind === "far" ? settings.farDistanceCm : settings.nearDistanceCm;
+}
+
+function visualAngle(distanceCm, monitorDistanceCm) {
+  return 2 * Math.atan(distanceCm / (2 * monitorDistanceCm)) * 180 / Math.PI;
 }
 
 function qualityFromSamples(validSamples, validRatio, earlyGain) {
@@ -1498,147 +1047,74 @@ function renderTrace() {
 }
 
 function drawCenteredText(context, text, width, height) {
+  context.save();
   context.fillStyle = "#66737c";
-  context.font = "16px system-ui, sans-serif";
+  context.font = "600 15px system-ui, sans-serif";
   context.textAlign = "center";
-  context.textBaseline = "middle";
   context.fillText(text, width / 2, height / 2);
+  context.restore();
 }
 
-function drawGrid(context, bounds) {
-  const { width, height, padding, plotWidth, plotHeight, minT, maxT, yMin, yMax, xFor, yFor } = bounds;
-  context.strokeStyle = "#dce3e7";
-  context.lineWidth = 1;
-  context.strokeRect(padding.left, padding.top, plotWidth, plotHeight);
-
-  context.fillStyle = "#66737c";
+function drawGrid(context, opts) {
+  const { width, height, padding, plotWidth, plotHeight, minT, maxT, yMin, yMax, xFor, yFor } = opts;
+  context.save();
+  context.strokeStyle = "#e2e8ed";
+  context.fillStyle = "#7a8790";
   context.font = "12px system-ui, sans-serif";
-  context.textAlign = "right";
-  context.textBaseline = "middle";
+  context.lineWidth = 1;
 
-  const yStep = niceStep((yMax - yMin) / 5);
-  for (let y = Math.ceil(yMin / yStep) * yStep; y <= yMax; y += yStep) {
-    const py = yFor(y);
-    context.strokeStyle = y === 0 ? "#b8c4ca" : "#eef2f4";
-    context.beginPath();
-    context.moveTo(padding.left, py);
-    context.lineTo(width - padding.right, py);
-    context.stroke();
-    context.fillText(`${Math.round(y)} deg`, padding.left - 8, py);
-  }
-
-  context.textAlign = "center";
-  context.textBaseline = "top";
   const xStep = niceStep((maxT - minT) / 8);
   for (let t = Math.ceil(minT / xStep) * xStep; t <= maxT; t += xStep) {
-    const px = xFor(t);
-    context.strokeStyle = "#eef2f4";
+    const x = xFor(t);
     context.beginPath();
-    context.moveTo(px, padding.top);
-    context.lineTo(px, height - padding.bottom);
+    context.moveTo(x, padding.top);
+    context.lineTo(x, padding.top + plotHeight);
     context.stroke();
-    context.fillStyle = "#66737c";
-    context.fillText(`${t.toFixed(1)}s`, px, height - padding.bottom + 8);
+    context.fillText(t.toFixed(1), x - 10, height - 10);
   }
+
+  const yStep = niceStep((yMax - yMin) / 6);
+  for (let y = Math.ceil(yMin / yStep) * yStep; y <= yMax; y += yStep) {
+    const py = yFor(y);
+    context.beginPath();
+    context.moveTo(padding.left, py);
+    context.lineTo(padding.left + plotWidth, py);
+    context.stroke();
+    context.fillText(y.toFixed(0), 12, py + 4);
+  }
+  context.strokeStyle = "#9aa8b2";
+  context.strokeRect(padding.left, padding.top, plotWidth, plotHeight);
+  context.restore();
 }
 
 function drawTrialWindows(context, { xFor, padding, plotHeight }) {
   const settings = getSettings();
+  context.save();
   for (const trial of state.trials) {
-    const sign = directionSign(trial.direction);
-    const start = trial.onset;
-    const end = trial.onset + (trial.durationMs || settings.durationMs) / 1000;
-    const gainStart = trial.onset + settings.windowStartMs / 1000;
-    const gainEnd = trial.onset + settings.windowEndMs / 1000;
-    const color = sign > 0 ? "28,109,208" : "216,72,72";
-
-    context.fillStyle = `rgba(${color},0.08)`;
-    context.fillRect(xFor(start), padding.top, xFor(end) - xFor(start), plotHeight);
-    context.fillStyle = `rgba(${color},0.18)`;
-    context.fillRect(xFor(gainStart), padding.top, xFor(gainEnd) - xFor(gainStart), plotHeight);
+    const start = trial.onset + settings.windowStartMs / 1000;
+    const end = trial.onset + settings.windowEndMs / 1000;
+    const x1 = xFor(start);
+    const x2 = xFor(end);
+    context.fillStyle = trial.direction === "right" ? "rgba(55,126,184,0.12)" : "rgba(228,26,28,0.12)";
+    context.fillRect(x1, padding.top, Math.max(1, x2 - x1), plotHeight);
+    context.strokeStyle = trial.direction === "right" ? "rgba(55,126,184,0.5)" : "rgba(228,26,28,0.5)";
+    context.strokeRect(x1, padding.top, Math.max(1, x2 - x1), plotHeight);
   }
+  context.restore();
 }
 
-function drawPlaybackCursor(context, { width, padding, plotHeight, xFor, yFor, minT, maxT }) {
-  const gazeTime = videoTimeToRecordingTime();
-  if (!Number.isFinite(gazeTime) || gazeTime < minT || gazeTime > maxT || !el.stimulusVideo.src) return;
-
-  const x = xFor(gazeTime);
+function drawPlaybackCursor(context, { padding, plotHeight, xFor, minT, maxT }) {
+  const t = currentRecordingTimeFromVideo();
+  if (!Number.isFinite(t) || t < minT || t > maxT) return;
+  const x = xFor(t);
   context.save();
-  context.strokeStyle = "#1c6dd0";
-  context.lineWidth = 2.5;
+  context.strokeStyle = "#f39c12";
+  context.lineWidth = 2;
   context.beginPath();
   context.moveTo(x, padding.top);
   context.lineTo(x, padding.top + plotHeight);
   context.stroke();
-
-  const nearest = nearestGazeSample(gazeTime);
-  if (nearest && Number.isFinite(nearest.azimuthDeg)) {
-    context.fillStyle = "#1c6dd0";
-    context.beginPath();
-    context.arc(x, yFor(nearest.azimuthDeg), 4, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  const label = `${gazeTime.toFixed(3)} s`;
-  context.font = "12px system-ui, sans-serif";
-  const textWidth = context.measureText(label).width;
-  const boxWidth = textWidth + 14;
-  const boxHeight = 22;
-  const boxX = clamp(x - boxWidth / 2, padding.left + 4, width - padding.right - boxWidth - 4);
-  const boxY = padding.top + 6;
-
-  context.fillStyle = "#1c6dd0";
-  roundRect(context, boxX, boxY, boxWidth, boxHeight, 6);
-  context.fill();
-  context.fillStyle = "#fff";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(label, boxX + boxWidth / 2, boxY + boxHeight / 2 + 0.5);
   context.restore();
-}
-
-function nearestGazeSample(time) {
-  const gaze = state.gaze;
-  if (!gaze.length) return null;
-  let low = 0;
-  let high = gaze.length - 1;
-
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (gaze[middle].t < time) low = middle + 1;
-    else high = middle;
-  }
-
-  const current = gaze[low];
-  const previous = gaze[Math.max(0, low - 1)];
-  if (!previous) return current;
-  return Math.abs(previous.t - time) < Math.abs(current.t - time) ? previous : current;
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function roundRect(context, x, y, width, height, radius) {
-  context.beginPath();
-  context.moveTo(x + radius, y);
-  context.lineTo(x + width - radius, y);
-  context.quadraticCurveTo(x + width, y, x + width, y + radius);
-  context.lineTo(x + width, y + height - radius);
-  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  context.lineTo(x + radius, y + height);
-  context.quadraticCurveTo(x, y + height, x, y + height - radius);
-  context.lineTo(x, y + radius);
-  context.quadraticCurveTo(x, y, x + radius, y);
-  context.closePath();
-}
-
-function niceStep(rawStep) {
-  const exponent = Math.floor(Math.log10(Math.max(rawStep, 0.0001)));
-  const fraction = rawStep / 10 ** exponent;
-  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
-  return niceFraction * 10 ** exponent;
 }
 
 function renderTrialTable() {
@@ -1804,6 +1280,68 @@ function handleCanvasClick(event) {
   seekVideoToRecordingTime(t);
 }
 
+function nearestGazeSample(time) {
+  const gaze = state.gaze;
+  if (!gaze.length) return null;
+  let low = 0;
+  let high = gaze.length - 1;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (gaze[middle].t < time) low = middle + 1;
+    else high = middle;
+  }
+
+  const current = gaze[low];
+  const previous = gaze[Math.max(0, low - 1)];
+  if (!previous) return current;
+  return Math.abs(previous.t - time) < Math.abs(current.t - time) ? previous : current;
+}
+
+function median(values) {
+  const finite = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!finite.length) return NaN;
+  const middle = Math.floor(finite.length / 2);
+  return finite.length % 2 ? finite[middle] : (finite[middle - 1] + finite[middle]) / 2;
+}
+
+function mean(values) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return NaN;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
+function standardDeviation(values) {
+  const finite = values.filter(Number.isFinite);
+  if (finite.length < 2) return NaN;
+  const avg = mean(finite);
+  const variance = finite.reduce((sum, value) => sum + (value - avg) ** 2, 0) / (finite.length - 1);
+  return Math.sqrt(variance);
+}
+
+function directionLabel(value) {
+  return value === "right" ? "Destra" : "Sinistra";
+}
+
+function distanceLabel(value) {
+  return value === "far" ? "Ampia" : "Breve";
+}
+
+function formatNumber(value, digits = 2) {
+  return Number.isFinite(value) ? value.toLocaleString("it-IT", { maximumFractionDigits: digits, minimumFractionDigits: digits }) : "-";
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function niceStep(rawStep) {
+  const exponent = Math.floor(Math.log10(Math.max(rawStep, 0.0001)));
+  const fraction = rawStep / 10 ** exponent;
+  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  return niceFraction * 10 ** exponent;
+}
+
 function bindSettings() {
   [
     el.monitorDistance,
@@ -1822,8 +1360,8 @@ function bindSettings() {
 
 function initialize() {
   bindSettings();
-  el.loadSampleBtn.addEventListener("click", () => loadSampleData("sample1"));
-  el.loadSample2Btn.addEventListener("click", () => loadSampleData("sample2"));
+  el.loadSampleBtn?.addEventListener("click", () => loadSampleData("sample1"));
+  el.loadSample2Btn?.addEventListener("click", () => loadSampleData("sample2"));
   el.folderInput.addEventListener("change", handleFolderImport);
   el.trialInput.addEventListener("change", handleTrialImport);
   el.videoInput.addEventListener("change", handleVideoImport);
@@ -1834,23 +1372,6 @@ function initialize() {
   el.markCenterBtn.addEventListener("click", startMarkCenterMode);
   el.clearCenterBtn.addEventListener("click", clearTargetCenter);
   el.videoOverlayCanvas.addEventListener("click", handleVideoOverlayClick);
-  el.calibrationPointSelect.addEventListener("change", () => {
-    state.activeCalibrationPoint = el.calibrationPointSelect.value;
-    updateCalibrationUi();
-    renderVideoOverlay();
-  });
-  el.calibrationTargetModeBtn.addEventListener("click", () => setCalibrationMode("target"));
-  el.calibrationFixationModeBtn.addEventListener("click", () => setCalibrationMode("fixation"));
-  el.fitCalibrationBtn.addEventListener("click", fitCalibrationFromPairs);
-  el.clearCalibrationBtn.addEventListener("click", () => clearCalibration());
-  el.calibrationStartS.addEventListener("change", () => {
-    updateCalibrationUi();
-    renderVideoOverlay();
-  });
-  el.calibrationEndS.addEventListener("change", () => {
-    updateCalibrationUi();
-    renderVideoOverlay();
-  });
   el.stimulusVideo.addEventListener("play", startPlaybackCursor);
   el.stimulusVideo.addEventListener("pause", stopPlaybackCursor);
   el.stimulusVideo.addEventListener("ended", stopPlaybackCursor);
@@ -1883,8 +1404,6 @@ function initialize() {
     renderVideoOverlay();
   });
   updateExportButtons();
-  initializeCalibrationSelect();
-  updateCalibrationUi();
   renderTrace();
   renderVideoOverlay();
 }
