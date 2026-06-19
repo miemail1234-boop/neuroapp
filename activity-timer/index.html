@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>Activity Timer</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">Life Tracker</p>
+      <h1>Activity Timer</h1>
+    </div>
+    <button id="resetDayBtn" class="ghost-btn" type="button">Azzera oggi</button>
+  </header>
+
+  <main>
+    <section class="card setup-card" aria-labelledby="setupTitle">
+      <div class="section-title-row">
+        <div>
+          <h2 id="setupTitle">Attività</h2>
+          <p>Imposta nome e minuti-obiettivo. I dati restano salvati sul dispositivo.</p>
+        </div>
+        <button id="addActivityBtn" class="secondary-btn" type="button">+ Aggiungi</button>
+      </div>
+      <div id="activityEditor" class="activity-editor"></div>
+    </section>
+
+    <section class="timer-panel" aria-labelledby="timerTitle">
+      <div class="timer-display card">
+        <p class="eyebrow">Timer attivo</p>
+        <h2 id="timerTitle">Nessuna attività</h2>
+        <div id="elapsedTime" class="elapsed">00:00</div>
+        <p id="targetInfo" class="target-info">Premi un pulsante per iniziare.</p>
+        <div class="timer-actions">
+          <button id="pauseBtn" class="secondary-btn" type="button">Pausa</button>
+          <button id="stopBtn" class="danger-btn" type="button">Stop</button>
+        </div>
+      </div>
+
+      <div id="activityButtons" class="activity-buttons" aria-label="Pulsanti attività"></div>
+    </section>
+
+    <section class="card stats-card" aria-labelledby="statsTitle">
+      <div class="section-title-row">
+        <div>
+          <h2 id="statsTitle">Distribuzione tempo</h2>
+          <p id="totalTimeLabel">Totale registrato oggi: 0 min</p>
+        </div>
+      </div>
+      <div class="chart-layout">
+        <canvas id="pieChart" width="320" height="320" aria-label="Pie chart percentuali attività"></canvas>
+        <div id="legend" class="legend"></div>
+      </div>
+    </section>
+  </main>
+
+  <template id="activityRowTemplate">
+    <div class="activity-row">
+      <input class="activity-name" type="text" aria-label="Nome attività" placeholder="Nome attività" maxlength="32" />
+      <input class="activity-target" type="number" aria-label="Minuti da dedicare" min="1" step="1" />
+      <button class="remove-activity" type="button" aria-label="Rimuovi attività">x</button>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
