@@ -1,8 +1,8 @@
-const K='activityTimerState.v1';
-const C=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#be123c','#4f46e5','#65a30d','#c026d3'];
+const K='activityTimerState.v2';
+const C=['#2563eb','#7c3aed','#059669','#f59e0b','#ef4444','#0891b2','#db2777','#4f46e5','#65a30d','#c026d3'];
 const id=()=>crypto.randomUUID();
 const today=()=>new Date().toISOString().slice(0,10);
-const def=()=>({date:today(),activeId:null,isPaused:false,lastTickAt:null,activities:[{id:id(),name:'Studio',targetMinutes:45,color:C[0],seconds:0},{id:id(),name:'Allenamento',targetMinutes:30,color:C[1],seconds:0},{id:id(),name:'Lettura',targetMinutes:20,color:C[2],seconds:0},{id:id(),name:'Relax',targetMinutes:15,color:C[3],seconds:0}]});
+const def=()=>({date:today(),activeId:null,isPaused:false,lastTickAt:null,activities:[{id:id(),name:'Clinica pazienti',targetMinutes:240,color:C[0],seconds:0},{id:id(),name:'Ricerca',targetMinutes:120,color:C[1],seconds:0},{id:id(),name:'Casa',targetMinutes:30,color:C[2],seconds:0},{id:id(),name:'Relazioni sociali',targetMinutes:30,color:C[3],seconds:0},{id:id(),name:'Alimentazione',targetMinutes:60,color:C[4],seconds:0},{id:id(),name:'Allenamento',targetMinutes:45,color:C[5],seconds:0},{id:id(),name:'Tempo libero',targetMinutes:60,color:C[6],seconds:0}]});
 let s=load();
 const q=x=>document.querySelector(x),ed=q('#activityEditor'),bs=q('#activityButtons'),tpl=q('#activityRowTemplate'),ttl=q('#timerTitle'),el=q('#elapsedTime'),info=q('#targetInfo'),pause=q('#pauseBtn'),stop=q('#stopBtn'),add=q('#addActivityBtn'),reset=q('#resetDayBtn'),total=q('#totalTimeLabel'),leg=q('#legend'),cv=q('#pieChart'),ctx=cv.getContext('2d');
 function load(){try{const x=JSON.parse(localStorage.getItem(K));return x&&x.activities&&x.activities.length?{...def(),...x,activeId:null,isPaused:false,lastTickAt:null}:def()}catch{return def()}}
