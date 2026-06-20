@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#111827" />
   <title>Timer Attività</title>
-  <link rel="stylesheet" href="styles.css?v=7" />
+  <link rel="stylesheet" href="styles.css?v=9" />
 </head>
 <body>
   <header class="app-header">
@@ -35,16 +35,21 @@
     </section>
 
     <section class="card total-target-card" aria-labelledby="totalTargetTitle">
-      <p class="eyebrow">Totale programmato</p>
+      <p class="eyebrow">Budget e controllo 100%</p>
       <h2 id="totalTargetTitle">Ore inserite</h2>
+      <div class="budget-row">
+        <label for="budgetInput">Budget totale giornaliero in minuti</label>
+        <input id="budgetInput" type="number" min="1" step="1" />
+      </div>
       <p id="targetSummary" class="target-info">Calcolo del totale...</p>
+      <p id="globalPercent" class="global-percent">Totale: 0%</p>
     </section>
 
     <section class="card setup-card" aria-labelledby="setupTitle">
       <div class="section-title-row">
         <div>
           <h2 id="setupTitle">Aree della giornata</h2>
-          <p>Imposta nome e minuti-obiettivo. La percentuale indica il peso di ogni area sul totale programmato.</p>
+          <p>La percentuale di ogni area è calcolata sul budget totale giornaliero. Se la somma supera il budget, il totale va oltre 100%.</p>
         </div>
         <button id="addActivityBtn" class="secondary-btn" type="button">+ Aggiungi</button>
       </div>
@@ -101,6 +106,6 @@
   </template>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>
