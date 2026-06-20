@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#111827" />
   <title>Timer Attività</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=6" />
 </head>
 <body>
   <header class="app-header">
@@ -27,9 +27,15 @@
       <div class="section-title-row">
         <div>
           <h2 id="setupTitle">Aree della giornata</h2>
-          <p>Imposta nome e minuti-obiettivo. I dati restano salvati sul dispositivo.</p>
+          <p>Imposta nome e minuti-obiettivo. La percentuale indica il peso di ogni area sul totale programmato.</p>
         </div>
         <button id="addActivityBtn" class="secondary-btn" type="button">+ Aggiungi</button>
+      </div>
+      <div class="activity-row activity-head">
+        <span>Attività</span>
+        <span>Minuti</span>
+        <span>%</span>
+        <span></span>
       </div>
       <div id="activityEditor" class="activity-editor"></div>
     </section>
@@ -72,10 +78,11 @@
     <div class="activity-row">
       <input class="activity-name" type="text" aria-label="Nome attività" placeholder="Nome attività" maxlength="32" />
       <input class="activity-target" type="number" aria-label="Minuti da dedicare" min="1" step="1" />
+      <span class="activity-percent" aria-label="Percentuale attività">0%</span>
       <button class="remove-activity" type="button" aria-label="Rimuovi attività">x</button>
     </div>
   </template>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
