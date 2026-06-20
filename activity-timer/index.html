@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#111827" />
   <title>Timer Attività</title>
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <header class="app-header">
@@ -17,6 +17,23 @@
   </header>
 
   <main>
+    <section class="card auth-card" aria-labelledby="authTitle">
+      <div class="section-title-row">
+        <div>
+          <p class="eyebrow">Cloud Supabase</p>
+          <h2 id="authTitle">Sincronizzazione dati</h2>
+          <p id="cloudStatus" class="target-info">Controllo accesso...</p>
+        </div>
+      </div>
+      <div id="authBox" class="auth-box">
+        <input id="emailInput" type="email" placeholder="Email Supabase" autocomplete="email" />
+        <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+        <button id="signInBtn" class="secondary-btn" type="button">Accedi</button>
+        <button id="signUpBtn" class="secondary-btn" type="button">Crea account</button>
+        <button id="signOutBtn" class="danger-btn" type="button">Esci</button>
+      </div>
+    </section>
+
     <section class="card total-target-card" aria-labelledby="totalTargetTitle">
       <p class="eyebrow">Totale programmato</p>
       <h2 id="totalTargetTitle">Ore inserite</h2>
@@ -83,6 +100,7 @@
     </div>
   </template>
 
-  <script src="app.js?v=6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
