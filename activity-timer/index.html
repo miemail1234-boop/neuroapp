@@ -45,7 +45,6 @@
           <button id="stopBtn" class="danger-btn" type="button">Stop</button>
         </div>
       </div>
-
       <div id="activityButtons" class="activity-buttons" aria-label="Pulsanti attività"></div>
     </section>
 
@@ -53,7 +52,13 @@
       <div class="section-title-row">
         <div>
           <h2 id="statsTitle">Distribuzione tempo</h2>
-          <p id="totalTimeLabel">Totale registrato oggi: 0 min</p>
+          <p id="totalTimeLabel">Totale registrato: 0 min</p>
+          <p id="periodLabel" class="target-info">Vista giornaliera</p>
+        </div>
+        <div class="timer-actions" id="periodControls">
+          <button class="secondary-btn" type="button" data-period="day">Giorno</button>
+          <button class="secondary-btn" type="button" data-period="week">Settimana</button>
+          <button class="secondary-btn" type="button" data-period="month">Mese</button>
         </div>
       </div>
       <div class="chart-layout">
@@ -71,6 +76,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
