@@ -6,7 +6,7 @@
   let selected=[];
   function id(x){return document.getElementById(x)}
   function n(v){const x=Number(String(v??'').replace(',','.'));return Number.isFinite(x)?x:NaN}
-  function fmt(x){return Number.isFinite(x)?x.toLocaleString('it-IT',{maximumFractionDigits:3,minimumFractionDigits:3}):''}
+  function fmt(x){return Number.isFinite(x)?Number(x).toFixed(3):''}
   function point(k){return typeof P!=='undefined'?P.find(p=>p.key===k):null}
   function labelForIndex(i){const p=point(ORDER[i]);return p?p.label:ORDER[i]}
   function status(title,text,kind='ready'){const b=id('statusBand'),t=id('statusTitle'),s=id('statusText');if(b&&t&&s){b.className='status-band '+kind;t.textContent=title;s.textContent=text}}
@@ -15,8 +15,8 @@
   function inInterval(f){const a=calStart(),b=calEnd();if(!Number.isFinite(a)||!Number.isFinite(b))return false;return f.t>=Math.min(a,b)&&f.t<=Math.max(a,b)}
   function candidates(){return typeof S==='undefined'?[]:(S.fix||[]).filter(f=>Number.isFinite(f.x)&&Number.isFinite(f.y)&&inInterval(f)).sort((a,b)=>(a.start??a.t)-(b.start??b.t))}
   function currentVideoTime(){return typeof recTime==='function'?recTime():id('sceneVideo')?.currentTime||0}
-  function setCurrentAsStart(){id('calStartSec').value=fmt(currentVideoTime());showAll()}
-  function setCurrentAsEnd(){id('calEndSec').value=fmt(currentVideoTime());showAll()}
+  function setCurrentAsStart(){const el=id('calStartSec');if(el){el.value=fmt(currentVideoTime());el.dispatchEvent(new Event('change',{bubbles:true}))}showAll()}
+  function setCurrentAsEnd(){const el=id('calEndSec');if(el){el.value=fmt(currentVideoTime());el.dispatchEvent(new Event('change',{bubbles:true}))}showAll()}
   function showAll(){showInterval=true;selecting=false;selected=[];drawNow();status('Fissazioni calibrazione','Mostro nel video principale tutte le fissazioni comprese nell’intervallo: '+candidates().length+'.')}
   function startSelection(){const list=candidates();if(!list.length)return status('Intervallo vuoto','Imposta un intervallo che contenga le fissazioni dei 9 punti di calibrazione.','warn');selected=[];selecting=true;showInterval=true;drawNow();status('Seleziona 9 fissazioni','Clicca nel video principale la fissazione corrispondente a: '+labelForIndex(0)+'.')}
   function clearSelection(){selected=[];selecting=false;showInterval=true;if(typeof S!=='undefined'){S.pairs={};S.model=null}drawNow();if(typeof render==='function')render();status('Selezione cancellata','Puoi ripartire dalla prima fissazione della calibrazione.')}
@@ -27,14 +27,19 @@
   const baseDraw=window.draw;
   window.draw=function(){if(baseDraw)baseDraw();if(showInterval||selecting)drawIntervalOverlay()}
   function drawNow(){if(typeof window.draw==='function')window.draw();updateCount()}
-  function drawIntervalOverlay(){const c=id('overlayCanvas');if(!c)return;const ctx=c.getContext('2d');const used=new Map(selected.map((f,i)=>[f.id,i+1]));candidates().forEach((f,i)=>{const num=used.get(f.id);mark(ctx,f,num?'#00c285':'#ff9f43',num?String(num):'')})}
+  function drawIntervalOverlay(){const c=id('overlayCanvas');if(!c)return;const ctx=c.getContext('2d');const used=new Map(selected.map((f,i)=>[f.id,i+1]));candidates().forEach(f=>{const num=used.get(f.id);mark(ctx,f,num?'#00c285':'#ff9f43',num?String(num):'')})}
   function updateCount(){const x=id('selectedFixCount');if(x)x.textContent=selected.length+'/9';const y=id('intervalFixCount');if(y)y.textContent=String(candidates().length)}
+  function bindButtons(){
+    const a=id('setCalStartBtn'),b=id('setCalEndBtn'),c=id('showIntervalFixBtn'),d=id('startNineFixSelectBtn'),e=id('clearCalibrationBtn'),f=id('fitCalibrationBtn');
+    if(a)a.onclick=setCurrentAsStart;if(b)b.onclick=setCurrentAsEnd;if(c)c.onclick=showAll;if(d)d.onclick=startSelection;if(e)e.onclick=clearSelection;if(f)f.onclick=()=>{applyPairs();if(typeof fitCal==='function')fitCal()};
+    ['calStartSec','calEndSec'].forEach(k=>{const el=id(k);if(el&&!el.dataset.boundInterval){el.dataset.boundInterval='1';el.addEventListener('input',()=>{showInterval=true;updateCount();drawNow()});el.addEventListener('change',()=>{showInterval=true;updateCount();drawNow()})}})
+  }
   function installUI(){
     const old=[...document.querySelectorAll('.panel-card')].find(sec=>sec.querySelector('.corner-grid'));
-    if(old&&!old.dataset.intervalCalReady){old.dataset.intervalCalReady='1';old.innerHTML='<div class="panel-head"><h2>2. Intervallo di calibrazione</h2></div><p class="hint">Imposta l’inizio e la fine della fase in cui il soggetto guarda i 9 punti. Le fissazioni di questo intervallo verranno mostrate nel video principale.</p><div class="form-grid"><label>Inizio calibrazione (s)<input id="calStartSec" type="number" step="0.001" placeholder="inizio" /></label><label>Fine calibrazione (s)<input id="calEndSec" type="number" step="0.001" placeholder="fine" /></label></div><div class="button-row"><button id="setCalStartBtn" type="button">Usa tempo corrente come inizio</button><button id="setCalEndBtn" type="button">Usa tempo corrente come fine</button><button id="showIntervalFixBtn" type="button" class="primary">Mostra fissazioni intervallo</button></div><div class="readout">Fissazioni nell’intervallo: <strong id="intervalFixCount">0</strong></div>'}
+    if(old&&!old.dataset.intervalCalReady){old.dataset.intervalCalReady='1';old.innerHTML='<div class="panel-head"><h2>2. Intervallo di calibrazione</h2></div><p class="hint">Imposta l’inizio e la fine della fase in cui il soggetto guarda i 9 punti. Puoi scrivere i secondi manualmente oppure usare il tempo corrente del video.</p><div class="form-grid"><label>Inizio calibrazione (s)<input id="calStartSec" type="number" step="0.001" placeholder="es. 12.345" /></label><label>Fine calibrazione (s)<input id="calEndSec" type="number" step="0.001" placeholder="es. 18.900" /></label></div><div class="button-row"><button id="setCalStartBtn" type="button">Usa tempo video come inizio</button><button id="setCalEndBtn" type="button">Usa tempo video come fine</button><button id="showIntervalFixBtn" type="button" class="primary">Mostra fissazioni intervallo</button></div><div class="readout">Fissazioni nell’intervallo: <strong id="intervalFixCount">0</strong></div>'}
     const sec=[...document.querySelectorAll('.panel-card')].find(s=>s.querySelector('#calibrationPointSelect'));
     if(sec&&!sec.dataset.intervalSelectReady){sec.dataset.intervalSelectReady='1';const h=sec.querySelector('h2');if(h)h.textContent='3. Selezione delle 9 fissazioni';const p=sec.querySelector('.hint');if(p)p.textContent='Dopo aver mostrato le fissazioni dell’intervallo, clicca nel video principale le 9 fissazioni corrispondenti ai 9 punti reali, nello stesso ordine del protocollo: alto sinistra, alto centro, alto destra, centro destra, centro, centro sinistra, basso sinistra, basso centro, basso destra.';const row=sec.querySelector('.button-row');if(row)row.innerHTML='<button id="startNineFixSelectBtn" type="button" class="primary">Seleziona 9 fissazioni</button><button id="fitCalibrationBtn" class="primary">Calcola correzione</button><button id="clearCalibrationBtn" class="ghost">Cancella</button>';const r=sec.querySelector('.readout');if(r)r.innerHTML='Fissazioni selezionate: <strong id="selectedFixCount">0/9</strong>'}
-    id('setCalStartBtn')&&(id('setCalStartBtn').onclick=setCurrentAsStart);id('setCalEndBtn')&&(id('setCalEndBtn').onclick=setCurrentAsEnd);id('showIntervalFixBtn')&&(id('showIntervalFixBtn').onclick=showAll);id('startNineFixSelectBtn')&&(id('startNineFixSelectBtn').onclick=startSelection);id('clearCalibrationBtn')&&(id('clearCalibrationBtn').onclick=clearSelection);id('fitCalibrationBtn')&&(id('fitCalibrationBtn').onclick=()=>{applyPairs();if(typeof fitCal==='function')fitCal()});updateCount();
+    bindButtons();updateCount();
   }
   id('videoStage')?.addEventListener('click',clickMain,true);
   const oldRender=window.render;window.render=function(){if(oldRender)oldRender();setTimeout(installUI,0);setTimeout(updateCount,0)};
