@@ -6,8 +6,9 @@
     ['cr','Centro destra'],['c','Centro'],['cl','Centro sinistra'],
     ['bl','Basso sinistra'],['bc','Basso centro'],['br','Basso destra']
   ];
-  const COLORS=['#ff4d4d','#ff9f1c','#ffd166','#06d6a0','#4cc9f0','#4361ee','#b5179e','#f72585','#90be6d'];
-  const S={gaze:[],fix:[],sac:[],blink:[],events:[],pairs:{},selecting:false,showInterval:false,step:'target',pendingTarget:null,activeKey:'tl',videoUrl:null};
+  const COLORS=['#00c2ff','#ff4d6d','#ffd166','#06d6a0','#b388ff','#ff9f1c','#4dabf7','#f06595','#7bdff2'];
+  const COLOR_BY_KEY=Object.fromEntries(ORDER.map((p,i)=>[p[0],COLORS[i]]));
+  const S={gaze:[],fix:[],sac:[],blink:[],events:[],pairs:{},selecting:false,showInterval:false,step:'target',pendingTarget:null,videoUrl:null};
 
   function num(v){const x=Number(String(v??'').replace(',','.'));return Number.isFinite(x)?x:NaN}
   function text(id,v){const el=$(id);if(el)el.textContent=v}
@@ -59,7 +60,7 @@
       S.blink=parseInt(csv(await readFile(pick(files,'blinks.csv'))),t0);
       const v=files.find(f=>/\.(mp4|mov|webm|m4v)$/i.test(f.name)); if(v)loadVideo(v);
       S.pairs={};S.selecting=false;S.showInterval=false;S.step='target';S.pendingTarget=null;
-      setCounts(); updateCalCounts(); draw();
+      setStageMarking(false);setCounts(); updateCalCounts(); draw();
       status('Dati caricati',`${S.gaze.length} gaze, ${S.fix.length} fissazioni, ${S.sac.length} saccadi, ${S.blink.length} blink.`);
     }catch(e){status('Errore upload',e.message,'bad')}
   }
@@ -72,86 +73,73 @@
   function calStart(){return num($('calStartSec')?.value)}
   function calEnd(){return num($('calEndSec')?.value)}
   function validInterval(){return Number.isFinite(calStart())&&Number.isFinite(calEnd())}
-  function inCalibrationTime(){if(!validInterval())return false;const t=recTime(),a=Math.min(calStart(),calEnd()),b=Math.max(calStart(),calEnd());return t>=a&&t<=b}
-  function candidates(){if(!validInterval())return[];const a=Math.min(calStart(),calEnd()),b=Math.max(calStart(),calEnd());return S.fix.filter(f=>f.t>=a&&f.t<=b)}
+  function intervalBounds(){const a=calStart(),b=calEnd();return{a:Math.min(a,b),b:Math.max(a,b)}}
+  function isInsideInterval(t=recTime()){if(!validInterval())return false;const {a,b}=intervalBounds();return t>=a&&t<=b}
+  function candidates(){if(!validInterval())return[];const {a,b}=intervalBounds();return S.fix.filter(f=>f.t>=a&&f.t<=b)}
   function pairCount(){return Object.keys(S.pairs).length}
-  function labelOf(key){return (ORDER.find(x=>x[0]===key)||[key,key])[1]}
-  function indexOf(key){return Math.max(0,ORDER.findIndex(x=>x[0]===key))}
-  function colorOf(key){return COLORS[indexOf(key)%COLORS.length]}
-  function activeKey(){const sel=$('calPointSelect');return sel?.value||S.activeKey||'tl'}
-  function setNextUnpaired(){const sel=$('calPointSelect');if(!sel)return;const next=ORDER.find(([k])=>!S.pairs[k]);if(next)sel.value=next[0];S.activeKey=sel.value}
+  function selectedKey(){return $('calPointSelect')?.value||ORDER[0][0]}
+  function selectedLabel(){const k=selectedKey();return ORDER.find(x=>x[0]===k)?.[1]||k}
   function updateCalCounts(){text('intervalFixCount',candidates().length);text('selectedFixCount',pairCount()+'/9')}
+  function setStageMarking(on){const st=$('videoStage');if(st)st.classList.toggle('marking',!!on)}
   function mark(ctx,p,color,label,r=8){const q=toCan(p);ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(q.x,q.y,r,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.arc(q.x,q.y,3,0,Math.PI*2);ctx.fill();if(label){ctx.fillStyle='white';ctx.font='700 12px system-ui';ctx.fillText(label,q.x+10,q.y-8)}ctx.restore()}
   function draw(){
     const c=$('overlayCanvas'),st=$('videoStage');if(!c||!st)return;const r=st.getBoundingClientRect(),dpr=devicePixelRatio||1;c.width=Math.max(1,r.width*dpr);c.height=Math.max(1,r.height*dpr);c.style.width=r.width+'px';c.style.height=r.height+'px';const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,r.width,r.height);
-    const t=recTime(),inside=inCalibrationTime();
+    const t=recTime();
     if($('showTrail')?.checked){const g=nearTime(S.gaze,t);if(g)mark(ctx,g,'#4aa3ff','G',7)}
     if($('showFixations')?.checked&&!S.showInterval&&!S.selecting){currentFix(t).forEach(f=>mark(ctx,f,'#ff9f43','F'))}
-    if((S.showInterval||S.selecting)&&inside){
-      const used=new Map(Object.values(S.pairs).map(p=>[p.fix.id,p.key]));
-      candidates().forEach(f=>{const key=used.get(f.id);mark(ctx,f,key?colorOf(key):'#ff9f43',key?('F '+(indexOf(key)+1)):'')});
-      Object.values(S.pairs).forEach(p=>{mark(ctx,p.target,colorOf(p.key),'T '+(indexOf(p.key)+1),7)});
-      if(S.pendingTarget)mark(ctx,S.pendingTarget,colorOf(S.pendingTarget.key),'T?',7);
+    if((S.showInterval||S.selecting)&&isInsideInterval(t)){
+      const used=new Map(Object.values(S.pairs).map(p=>[p.fix.id,p.color]));
+      candidates().forEach(f=>mark(ctx,f,used.get(f.id)||'#ff9f43',used.has(f.id)?'✓':''));
+      Object.values(S.pairs).forEach(p=>{mark(ctx,p.target,p.color,p.label,7);});
+      if(S.pendingTarget)mark(ctx,S.pendingTarget,COLOR_BY_KEY[selectedKey()]||'#7bdff2',selectedLabel(),7);
     }
     text('videoTimeLabel',($('sceneVideo')?.currentTime||0).toFixed(3)+' s'); text('gazeTimeLabel',t.toFixed(3)+' s'); text('interactionModeLabel',S.selecting?(S.step==='target'?'clicca punto reale':'clicca fissazione'):'navigazione');
   }
   function showInterval(){
     if(!validInterval())return status('Intervallo mancante','Inserisci secondi inizio e secondi fine calibrazione. Usa il punto decimale, es. 12.345.','warn');
-    S.showInterval=true;S.selecting=false;S.step='target';S.pendingTarget=null;updateCalCounts();draw();
+    S.showInterval=true;S.selecting=false;S.step='target';S.pendingTarget=null;setStageMarking(false);updateCalCounts();draw();
     const n=candidates().length;
-    if(!inCalibrationTime())return status('Fissazioni intervallo','Trovate '+n+' fissazioni. Saranno visibili solo quando il video si trova tra '+calStart()+' e '+calEnd()+' secondi.');
+    if(!isInsideInterval())return status('Fissazioni intervallo','Ho trovato '+n+' fissazioni, ma le mostro solo quando il video è dentro l’intervallo selezionato. Porta il video tra '+calStart()+' e '+calEnd()+' s.','warn');
     status('Fissazioni intervallo',n?('Mostro '+n+' fissazioni nel video principale.'):('Intervallo valido, ma contiene 0 fissazioni. Controlla i secondi inseriti.'));
   }
   function startSelect(){
     if(!validInterval())return status('Intervallo mancante','Inserisci prima secondi inizio e secondi fine calibrazione.','warn');
     if(!candidates().length)return status('Intervallo vuoto','Nessuna fissazione trovata in questo intervallo.','warn');
-    if(!inCalibrationTime())return status('Fuori intervallo','Porta il video a un tempo compreso tra inizio e fine calibrazione, poi premi di nuovo il pulsante.','warn');
-    $('sceneVideo')?.pause();
-    const key=activeKey();S.activeKey=key;S.showInterval=true;S.selecting=true;S.step='target';S.pendingTarget=null;updateCalCounts();draw();
-    status('Seleziona coppia',labelOf(key)+': clicca prima il punto reale mostrato nel video.');
+    const v=$('sceneVideo'); if(v)v.pause();
+    S.showInterval=true;S.selecting=true;S.step='target';S.pendingTarget=null;setStageMarking(true);updateCalCounts();draw();
+    status('Seleziona coppia',selectedLabel()+': clicca prima il punto reale mostrato nel video.');
   }
-  function nearestCandidate(p){let best=null,bd=Infinity;const current=S.pendingTarget?.key;const used=new Set(Object.values(S.pairs).filter(x=>x.key!==current).map(x=>x.fix.id));for(const f of candidates()){if(used.has(f.id))continue;const d=Math.hypot(f.x-p.x,f.y-p.y);if(d<bd){bd=d;best=f}}return bd<=120?best:null}
+  function nearestCandidate(p){let best=null,bd=Infinity;const used=new Set(Object.values(S.pairs).map(x=>x.fix.id));for(const f of candidates()){if(used.has(f.id))continue;const d=Math.hypot(f.x-p.x,f.y-p.y);if(d<bd){bd=d;best=f}}return bd<=120?best:null}
   function clickOverlay(e){
-    if(!S.selecting)return;
-    e.preventDefault();e.stopPropagation();if(e.stopImmediatePropagation)e.stopImmediatePropagation();
-    $('sceneVideo')?.pause();
-    if(!inCalibrationTime())return status('Fuori intervallo','Le coppie si selezionano solo mentre il video è dentro l’intervallo di calibrazione.','warn');
+    if(!S.selecting)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
     const p=toVid(e);if(!p)return;
-    const key=activeKey();S.activeKey=key;
+    if(!isInsideInterval())return status('Fuori intervallo','Per selezionare le coppie, porta il video dentro l’intervallo di calibrazione.','warn');
+    const key=selectedKey(), label=selectedLabel(), color=COLOR_BY_KEY[key]||'#7bdff2';
     if(S.step==='target'){
-      S.pendingTarget={key,x:p.x,y:p.y};S.step='fix';draw();
-      status('Punto reale salvato',labelOf(key)+': ora clicca la fissazione corrispondente, che diventerà dello stesso colore.');
+      S.pendingTarget=p;S.step='fix';draw();
+      status('Punto reale salvato',label+': ora clicca la fissazione corrispondente dello stesso punto.');
       return;
     }
     const fx=nearestCandidate(p);
     if(!fx)return status('Nessuna fissazione vicina','Clicca più vicino a un punto di fissazione arancione.','warn');
-    S.pairs[key]={key,target:S.pendingTarget,fix:fx,label:labelOf(key)};
-    S.pendingTarget=null;S.step='target';S.selecting=false;updateCalCounts();setNextUnpaired();draw();
-    status('Coppia salvata',labelOf(key)+' salvato con lo stesso colore per punto reale e fissazione. Scegli un altro punto dal menu e continua.');
+    S.pairs[key]={key,label,color,target:S.pendingTarget,fix:fx};
+    S.pendingTarget=null;S.step='target';updateCalCounts();draw();
+    status('Coppia salvata',label+': punto reale e fissazione sono marcati con lo stesso colore. Ora scegli un altro punto dal menu.');
   }
-  function clearCal(){S.pairs={};S.selecting=false;S.showInterval=false;S.step='target';S.pendingTarget=null;updateCalCounts();draw();status('Calibrazione cancellata','Selezione delle coppie azzerata.')}
-  function fitCal(){if(pairCount()<4)return status('Calibrazione incompleta','Seleziona almeno 4 coppie, meglio tutte e 9.','warn');status('Calibrazione pronta','Sono state memorizzate '+pairCount()+' coppie punto reale + fissazione. I 4 estremi sono alto sinistra, alto destra, basso sinistra e basso destra.');}
-  function installPointMenu(){
-    if($('calPointSelect'))return;
-    const row=$('showIntervalFixBtn')?.closest('.button-row');
-    if(!row)return;
-    const wrap=document.createElement('label');wrap.className='field-wide';wrap.innerHTML='Punto reale da calibrare <select id="calPointSelect"></select>';
-    row.parentNode.insertBefore(wrap,row);
-    const sel=$('calPointSelect');ORDER.forEach(([k,l],i)=>{const o=document.createElement('option');o.value=k;o.textContent=(i+1)+'. '+l;sel.appendChild(o)});
-    sel.addEventListener('change',()=>{S.activeKey=sel.value;S.selecting=false;S.step='target';S.pendingTarget=null;draw();status('Punto selezionato',labelOf(sel.value)+': premi “Seleziona coppia scelta”.')});
-    const btn=$('startNineFixSelectBtn');if(btn)btn.textContent='Seleziona coppia scelta';
-    const hint=$('showIntervalFixBtn')?.closest('.panel-card')?.querySelector('.hint');
-    if(hint)hint.textContent='Inserisci inizio/fine calibrazione. Le fissazioni dell’intervallo sono sovraimpresse solo quando il video è dentro quell’intervallo. Scegli il punto reale dal menu, poi clicca nel video prima il punto reale e poi la fissazione corrispondente.';
-  }
+  function onPointChange(){S.step='target';S.pendingTarget=null;if(S.selecting)status('Punto selezionato',selectedLabel()+': clicca prima il punto reale mostrato nel video.');draw()}
+  function clearCal(){S.pairs={};S.selecting=false;S.showInterval=false;S.step='target';S.pendingTarget=null;setStageMarking(false);updateCalCounts();draw();status('Calibrazione cancellata','Selezione delle coppie azzerata.')}
+  function fitCal(){if(pairCount()<4)return status('Calibrazione incompleta','Seleziona almeno 4 coppie, meglio tutte e 9.','warn');status('Calibrazione pronta','Sono state memorizzate '+pairCount()+' coppie punto reale + fissazione. I colori collegano ogni punto reale alla sua fissazione.');}
+  function populateMenu(){const sel=$('calPointSelect');if(!sel)return;sel.innerHTML='';ORDER.forEach(([k,l])=>{const o=document.createElement('option');o.value=k;o.textContent=l;sel.appendChild(o)})}
   function init(){
-    installPointMenu();
+    populateMenu();
     $('folderInput').addEventListener('change',loadFolder);
     $('videoInput').addEventListener('change',e=>e.target.files[0]&&loadVideo(e.target.files[0]));
     $('showIntervalFixBtn').addEventListener('click',showInterval);
     $('startNineFixSelectBtn').addEventListener('click',startSelect);
     $('clearCalibrationBtn').addEventListener('click',clearCal);
     $('fitCalibrationBtn').addEventListener('click',fitCal);
-    $('videoStage').addEventListener('click',clickOverlay,true);
+    $('calPointSelect')?.addEventListener('change',onPointChange);
+    $('overlayCanvas').addEventListener('click',clickOverlay,true);
     $('sceneVideo').addEventListener('timeupdate',draw);
     ['showTrail','showFixations','showTarget','syncOffsetMs','calStartSec','calEndSec'].forEach(k=>$(k)?.addEventListener('input',()=>{updateCalCounts();draw()}));
     window.addEventListener('resize',draw); setCounts(); updateCalCounts(); status('Nessun dato caricato','Carica la cartella export con il pulsante Importa cartella.');
