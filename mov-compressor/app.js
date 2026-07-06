@@ -1,19 +1,14 @@
-import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
-import { fetchFile, toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
+const WARNING_SIZE_MB = 1500;
+const DEFAULT_FPS = 30;
 
-const FFMPEG_VERSION = '0.12.10';
-const CORE_VERSION = '0.12.6';
-const MAX_RECOMMENDED_MB = 750;
-const MAX_HARD_MB = 1500;
-
-const ffmpeg = new FFmpeg();
-let loaded = false;
 let selectedFile = null;
+let sourceUrl = null;
 let downloadUrl = null;
 let isCompressing = false;
-let inputName = null;
-let outputName = null;
-let ffmpegListenersReady = false;
+let mediaRecorder = null;
+let activeVideo = null;
+let animationFrameId = null;
+let audioContext = null;
 
 const $ = id => document.getElementById(id);
 const fileInput = $('fileInput');
@@ -53,44 +48,18 @@ function sanitizeName(name) {
   return name.replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '') || 'video';
 }
 
-function getInputExtension(file) {
-  const match = file?.name?.match(/\.([a-z0-9]+)$/i);
-  return match ? match[1].toLowerCase() : 'mov';
-}
-
-function validateFile(file) {
-  if (!file) return { level: 'info', text: 'Nessun file selezionato.' };
-
-  const hasValidExt = /\.(mov|mp4)$/i.test(file.name);
-  const hasValidType = ['video/quicktime', 'video/mp4', ''].includes(file.type);
-  const sizeMb = file.size / 1024 / 1024;
-
-  if (!hasValidExt || !hasValidType) {
-    return {
-      level: 'error',
-      text: 'Formato non supportato. Carica un file .mov o .mp4.'
-    };
-  }
-
-  if (sizeMb > MAX_HARD_MB) {
-    return {
-      level: 'error',
-      text: `File troppo grande per una compressione affidabile nel browser (${formatBytes(file.size)}). Per file sopra ${MAX_HARD_MB} MB usa FFmpeg desktop o riduci prima il video.`
-    };
-  }
-
-  if (sizeMb > MAX_RECOMMENDED_MB) {
-    return {
-      level: 'warning',
-      text: `File grande (${formatBytes(file.size)}). La compressione resta locale, ma può richiedere molta RAM e potrebbe fallire.`
-    };
-  }
-
-  return null;
+function log(line) {
+  logBox.textContent += `${line}\n`;
+  logBox.scrollTop = logBox.scrollHeight;
 }
 
 function setStatus(text) {
   statusText.textContent = text;
+}
+
+function resetProgress() {
+  progressBar.value = 0;
+  progressPct.textContent = '0%';
 }
 
 function setWarning(validation) {
@@ -99,24 +68,118 @@ function setWarning(validation) {
   warningBox.textContent = validation?.text || '';
 }
 
-function log(line) {
-  logBox.textContent += `${line}\n`;
-  logBox.scrollTop = logBox.scrollHeight;
-}
-
-function resetProgress() {
-  progressBar.value = 0;
-  progressPct.textContent = '0%';
-}
-
 function clearDownload() {
   if (downloadUrl) URL.revokeObjectURL(downloadUrl);
   downloadUrl = null;
   downloadLink.removeAttribute('href');
 }
 
+function clearSourceUrl() {
+  if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+  sourceUrl = null;
+}
+
+function validateFile(file) {
+  if (!file) return { level: 'info', text: 'Nessun file selezionato.' };
+
+  const hasValidExt = /\.(mov|mp4|m4v|webm)$/i.test(file.name);
+  const hasVideoType = !file.type || file.type.startsWith('video/');
+  const sizeMb = file.size / 1024 / 1024;
+
+  if (!hasValidExt || !hasVideoType) {
+    return {
+      level: 'error',
+      text: 'Formato non supportato. Carica un file video .mov, .mp4, .m4v o .webm.'
+    };
+  }
+
+  if (sizeMb > WARNING_SIZE_MB) {
+    return {
+      level: 'warning',
+      text: `File molto grande (${formatBytes(file.size)}). Questo metodo non usa FFmpeg WASM, ma la registrazione richiederà circa la durata del video e il browser dovrà comunque creare il file finale in memoria.`
+    };
+  }
+
+  return null;
+}
+
+function getQualityProfile() {
+  let value = Number(qualityInput.value || 3);
+
+  // Compatibilità con eventuale HTML vecchio in cache che usava CRF 20-36.
+  if (value > 10) {
+    if (value <= 23) value = 5;
+    else if (value <= 27) value = 4;
+    else if (value <= 31) value = 3;
+    else if (value <= 34) value = 2;
+    else value = 1;
+  }
+
+  const profiles = {
+    1: { label: 'Molto leggero', bitrate: 900_000 },
+    2: { label: 'Leggero', bitrate: 1_500_000 },
+    3: { label: 'Bilanciato', bitrate: 2_500_000 },
+    4: { label: 'Qualità alta', bitrate: 4_000_000 },
+    5: { label: 'Qualità massima', bitrate: 6_000_000 }
+  };
+
+  return profiles[Math.max(1, Math.min(5, value))] || profiles[3];
+}
+
 function updateQuality() {
-  qualityLabel.textContent = `CRF ${qualityInput.value}`;
+  const profile = getQualityProfile();
+  qualityLabel.textContent = `${profile.label} · ${(profile.bitrate / 1_000_000).toFixed(1)} Mbps`;
+}
+
+function getRequestedMaxHeight() {
+  if (scaleSelect.value === 'original') return null;
+  const match = scaleSelect.value.match(/:(\d+)/);
+  return match ? Number(match[1]) : 720;
+}
+
+function even(value) {
+  return Math.max(2, Math.round(value / 2) * 2);
+}
+
+function computeOutputSize(video) {
+  const sourceWidth = video.videoWidth || 1280;
+  const sourceHeight = video.videoHeight || 720;
+  const maxHeight = getRequestedMaxHeight();
+
+  if (!maxHeight || sourceHeight <= maxHeight) {
+    return { width: even(sourceWidth), height: even(sourceHeight) };
+  }
+
+  const ratio = maxHeight / sourceHeight;
+  return {
+    width: even(sourceWidth * ratio),
+    height: even(sourceHeight * ratio)
+  };
+}
+
+function getSupportedMimeType() {
+  const webmTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  const mp4Types = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4'
+  ];
+
+  const preference = formatSelect.value;
+  const candidates = preference === 'mp4'
+    ? [...mp4Types, ...webmTypes]
+    : preference === 'webm'
+      ? [...webmTypes, ...mp4Types]
+      : [...webmTypes, ...mp4Types];
+
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function extensionFromMime(mimeType) {
+  return mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
 }
 
 function setBusy(value) {
@@ -129,42 +192,203 @@ function setBusy(value) {
   formatSelect.disabled = value;
 }
 
-function registerFFmpegListeners() {
-  if (ffmpegListenersReady) return;
-  ffmpeg.on('log', ({ message }) => log(message));
-  ffmpeg.on('progress', ({ progress }) => {
-    const value = Math.max(0, Math.min(1, progress || 0));
-    progressBar.value = value;
-    progressPct.textContent = `${Math.round(value * 100)}%`;
+function loadVideoMetadata(file) {
+  return new Promise((resolve, reject) => {
+    clearSourceUrl();
+    sourceUrl = URL.createObjectURL(file);
+
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.playsInline = true;
+    video.muted = true;
+    video.src = sourceUrl;
+
+    video.onloadedmetadata = () => resolve(video);
+    video.onerror = () => reject(new Error('Il browser non riesce a leggere questo video. Se è un MOV/HEVC da iPhone, prova Safari o usa FFmpeg desktop.'));
   });
-  ffmpegListenersReady = true;
 }
 
-async function loadFFmpeg() {
-  if (loaded) return;
+async function buildRecordingStream(video, width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
 
-  setStatus('Carico motore video...');
-  log('Caricamento ffmpeg.wasm. Può richiedere qualche secondo.');
+  const context = canvas.getContext('2d', { alpha: false });
+  const canvasStream = canvas.captureStream(DEFAULT_FPS);
+  const tracks = [...canvasStream.getVideoTracks()];
+  let audioDescription = 'nessun audio rilevato';
 
-  registerFFmpegListeners();
+  try {
+    audioContext = new AudioContext();
+    await audioContext.resume();
+    const source = audioContext.createMediaElementSource(video);
+    const destination = audioContext.createMediaStreamDestination();
+    source.connect(destination);
+    tracks.push(...destination.stream.getAudioTracks());
+    audioDescription = 'audio ricampionato dal browser';
+  } catch (error) {
+    log(`Audio non disponibile nella registrazione: ${error.message}`);
+  }
 
-  const ffmpegBaseURL = `https://unpkg.com/@ffmpeg/ffmpeg@${FFMPEG_VERSION}/dist/esm`;
-  const coreBaseURL = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/esm`;
+  function drawFrame() {
+    if (!isCompressing || !activeVideo) return;
+    context.drawImage(video, 0, 0, width, height);
 
-  await ffmpeg.load({
-    classWorkerURL: await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript'),
-    coreURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm')
+    if (Number.isFinite(video.duration) && video.duration > 0) {
+      const progress = Math.max(0, Math.min(1, video.currentTime / video.duration));
+      progressBar.value = progress;
+      progressPct.textContent = `${Math.round(progress * 100)}%`;
+    }
+
+    animationFrameId = requestAnimationFrame(drawFrame);
+  }
+
+  return {
+    stream: new MediaStream(tracks),
+    drawFrame,
+    audioDescription
+  };
+}
+
+async function recordVideo(video, stream, mimeType, bitrate) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    try {
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: bitrate
+      });
+    } catch (error) {
+      reject(new Error(`MediaRecorder non disponibile per questo formato: ${error.message}`));
+      return;
+    }
+
+    mediaRecorder.ondataavailable = event => {
+      if (event.data && event.data.size) chunks.push(event.data);
+    };
+
+    mediaRecorder.onerror = event => {
+      reject(new Error(event.error?.message || 'Errore MediaRecorder.'));
+    };
+
+    mediaRecorder.onstop = () => {
+      const type = mimeType || chunks[0]?.type || 'video/webm';
+      resolve(new Blob(chunks, { type }));
+    };
+
+    video.onended = () => {
+      if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
+    };
+
+    mediaRecorder.start(1000);
+    video.play().catch(error => reject(new Error(`Riproduzione non avviata: ${error.message}`)));
   });
+}
 
-  loaded = true;
-  setStatus('Motore video pronto');
+async function compress() {
+  if (!selectedFile || isCompressing) return;
+
+  const validation = validateFile(selectedFile);
+  setWarning(validation);
+  if (validation?.level === 'error') return;
+
+  if (!('MediaRecorder' in window)) {
+    setStatus('Errore');
+    log('Questo browser non supporta MediaRecorder. Usa Chrome/Edge/Safari aggiornato o FFmpeg desktop.');
+    return;
+  }
+
+  setBusy(true);
+  resetProgress();
+  logBox.textContent = '';
+  resultPanel.hidden = true;
+  clearDownload();
+
+  try {
+    setStatus('Leggo il video...');
+    log('Uso il metodo nativo del browser: video + canvas + MediaRecorder. Nessun FFmpeg WASM, nessun worker esterno.');
+
+    activeVideo = await loadVideoMetadata(selectedFile);
+    const { width, height } = computeOutputSize(activeVideo);
+    const profile = getQualityProfile();
+    const mimeType = getSupportedMimeType();
+
+    if (!mimeType) {
+      throw new Error('Il browser non supporta un formato di registrazione video compatibile.');
+    }
+
+    log(`Output: ${width}×${height}, ${profile.label}, ${(profile.bitrate / 1_000_000).toFixed(1)} Mbps, ${mimeType}.`);
+
+    const { stream, drawFrame, audioDescription } = await buildRecordingStream(activeVideo, width, height);
+    setStatus('Compressione/registrazione in corso...');
+    drawFrame();
+
+    const blob = await recordVideo(activeVideo, stream, mimeType, profile.bitrate);
+    stream.getTracks().forEach(track => track.stop());
+
+    const ext = extensionFromMime(blob.type || mimeType);
+    downloadUrl = URL.createObjectURL(blob);
+    downloadLink.href = downloadUrl;
+    downloadLink.download = `${sanitizeName(selectedFile.name.replace(/\.[^.]+$/, ''))}-compressed.${ext}`;
+
+    const delta = selectedFile.size ? (1 - blob.size / selectedFile.size) * 100 : 0;
+    originalSize.textContent = formatBytes(selectedFile.size);
+    compressedSize.textContent = formatBytes(blob.size);
+    savedSize.textContent = delta >= 0
+      ? `${delta.toFixed(1)}% in meno`
+      : `${Math.abs(delta).toFixed(1)}% più grande`;
+    audioMode.textContent = audioDescription;
+
+    progressBar.value = 1;
+    progressPct.textContent = '100%';
+    resultPanel.hidden = false;
+    setStatus('Completato');
+  } catch (error) {
+    resultPanel.hidden = true;
+    clearDownload();
+    setStatus('Errore');
+    log(`Errore: ${error.message || error}`);
+    log('Alternativa affidabile per file molto grandi: usare FFmpeg desktop con ridimensionamento a 540p/720p e bitrate controllato.');
+  } finally {
+    cleanupRuntime();
+    setBusy(false);
+  }
+}
+
+function cleanupRuntime() {
+  if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  animationFrameId = null;
+
+  if (activeVideo) {
+    activeVideo.pause();
+    activeVideo.removeAttribute('src');
+    activeVideo.load();
+  }
+  activeVideo = null;
+  mediaRecorder = null;
+
+  if (audioContext) audioContext.close().catch(() => {});
+  audioContext = null;
+}
+
+function cancelCompression() {
+  if (!isCompressing) return;
+
+  if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
+  cleanupRuntime();
+  setStatus('Annullato');
+  log('Compressione annullata.');
+  resultPanel.hidden = true;
+  clearDownload();
+  setBusy(false);
 }
 
 function selectFile(file) {
   selectedFile = file || null;
   resultPanel.hidden = true;
   clearDownload();
+  clearSourceUrl();
   resetProgress();
   logBox.textContent = '';
 
@@ -179,130 +403,6 @@ function selectFile(file) {
 
   fileInfo.textContent = `${selectedFile.name} · ${formatBytes(selectedFile.size)}`;
   compressBtn.disabled = validation?.level === 'error';
-}
-
-function buildVideoArgs({ input, output, crf, copyAudio }) {
-  const args = [
-    '-i', input,
-    '-map', '0:v:0',
-    '-map', '0:a?',
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', crf,
-    '-movflags', '+faststart'
-  ];
-
-  if (scaleSelect.value !== 'original') {
-    args.push('-vf', `scale=${scaleSelect.value}:force_original_aspect_ratio=decrease`);
-  }
-
-  if (copyAudio) {
-    args.push('-c:a', 'copy');
-  } else {
-    args.push('-c:a', 'aac', '-b:a', '128k');
-  }
-
-  args.push(output);
-  return args;
-}
-
-async function execOrThrow(args) {
-  log(`Comando: ffmpeg ${args.join(' ')}`);
-  const code = await ffmpeg.exec(args);
-  if (code !== 0) throw new Error(`FFmpeg terminato con codice ${code}.`);
-}
-
-async function runCompression(input, output, crf) {
-  const copyAudioArgs = buildVideoArgs({ input, output, crf, copyAudio: true });
-
-  try {
-    setStatus('Compressione in corso...');
-    await execOrThrow(copyAudioArgs);
-    return 'audio originale copiato';
-  } catch (error) {
-    log(`Audio copy non riuscito: ${error.message}`);
-    log('Riprovo convertendo audio in AAC per migliorare la compatibilità MP4...');
-    await ffmpeg.deleteFile(output).catch(() => {});
-    const fallbackArgs = buildVideoArgs({ input, output, crf, copyAudio: false });
-    await execOrThrow(fallbackArgs);
-    return 'audio convertito in AAC';
-  }
-}
-
-async function cleanupFiles() {
-  if (inputName) await ffmpeg.deleteFile(inputName).catch(() => {});
-  if (outputName) await ffmpeg.deleteFile(outputName).catch(() => {});
-  inputName = null;
-  outputName = null;
-}
-
-async function compress() {
-  if (!selectedFile || isCompressing) return;
-
-  const validation = validateFile(selectedFile);
-  setWarning(validation);
-  if (validation?.level === 'error') return;
-
-  setBusy(true);
-  resetProgress();
-  logBox.textContent = '';
-  resultPanel.hidden = true;
-  clearDownload();
-
-  try {
-    await loadFFmpeg();
-
-    const inputExt = getInputExtension(selectedFile);
-    const outputExt = formatSelect.value === 'mov' ? 'mov' : 'mp4';
-    inputName = `input.${inputExt}`;
-    outputName = `compressed.${outputExt}`;
-
-    setStatus('Scrivo il file in memoria...');
-    await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
-
-    const crf = qualityInput.value;
-    const audioResult = await runCompression(inputName, outputName, crf);
-
-    setStatus('Creo il download...');
-    const data = await ffmpeg.readFile(outputName);
-    const mime = outputExt === 'mov' ? 'video/quicktime' : 'video/mp4';
-    const blob = new Blob([data.buffer], { type: mime });
-
-    downloadUrl = URL.createObjectURL(blob);
-    downloadLink.href = downloadUrl;
-    downloadLink.download = `${sanitizeName(selectedFile.name.replace(/\.[^.]+$/, ''))}-compressed.${outputExt}`;
-
-    const delta = selectedFile.size ? (1 - blob.size / selectedFile.size) * 100 : 0;
-    originalSize.textContent = formatBytes(selectedFile.size);
-    compressedSize.textContent = formatBytes(blob.size);
-    savedSize.textContent = delta >= 0
-      ? `${delta.toFixed(1)}% in meno`
-      : `${Math.abs(delta).toFixed(1)}% più grande`;
-    audioMode.textContent = audioResult;
-
-    resultPanel.hidden = false;
-    setStatus('Completato');
-  } catch (error) {
-    resultPanel.hidden = true;
-    clearDownload();
-    setStatus('Errore');
-    log(`Errore: ${error.message || error}`);
-    log('Suggerimento: prova un file più piccolo, una risoluzione più bassa o usa FFmpeg desktop per video molto grandi.');
-  } finally {
-    await cleanupFiles();
-    setBusy(false);
-  }
-}
-
-function cancelCompression() {
-  if (!isCompressing) return;
-  ffmpeg.terminate();
-  loaded = false;
-  setStatus('Annullato');
-  log('Compressione annullata. Il motore video sarà ricaricato al prossimo avvio.');
-  resultPanel.hidden = true;
-  clearDownload();
-  setBusy(false);
 }
 
 qualityInput.addEventListener('input', updateQuality);
