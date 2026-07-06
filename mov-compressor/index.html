@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>MOV Compressor</title>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
   <header class="topbar">
     <div>
       <p class="eyebrow">Video utility</p>
       <h1>MOV Compressor</h1>
-      <p class="subtitle">Riduci drasticamente il peso dei file .mov ricodificando solo il video e mantenendo intatto l'audio originale.</p>
+      <p class="subtitle">Comprimi file .mov e .mp4 direttamente nel browser. Il video viene ricodificato in H.264; l'audio originale viene copiato quando compatibile, altrimenti convertito in AAC.</p>
     </div>
     <a class="back" href="../">neuroapp</a>
   </header>
@@ -20,10 +20,11 @@
     <section class="panel upload-panel">
       <label class="dropzone" id="dropzone">
         <input id="fileInput" type="file" accept="video/quicktime,video/mp4,.mov,.mp4">
-        <span class="drop-title">Carica file .mov</span>
+        <span class="drop-title">Carica file .mov o .mp4</span>
         <span class="drop-text">Il file resta nel browser: non viene caricato su server.</span>
       </label>
       <div id="fileInfo" class="file-info">Nessun file selezionato.</div>
+      <div id="warningBox" class="warning" hidden></div>
     </section>
 
     <section class="panel settings">
@@ -46,13 +47,16 @@
           <option value="mov">MOV</option>
         </select>
       </label>
-      <button id="compressBtn" class="primary" type="button" disabled>Comprimi mantenendo audio originale</button>
+      <div class="button-row">
+        <button id="compressBtn" class="primary" type="button" disabled>Comprimi video</button>
+        <button id="cancelBtn" class="secondary" type="button" hidden>Annulla</button>
+      </div>
     </section>
 
     <section class="panel progress-panel">
       <div class="progress-head"><strong id="statusText">Pronto</strong><span id="progressPct">0%</span></div>
       <progress id="progressBar" max="1" value="0"></progress>
-      <pre id="logBox"></pre>
+      <pre id="logBox" aria-live="polite"></pre>
     </section>
 
     <section class="panel result-panel" id="resultPanel" hidden>
@@ -60,16 +64,17 @@
       <div class="result-grid">
         <div><span>Originale</span><strong id="originalSize">—</strong></div>
         <div><span>Compresso</span><strong id="compressedSize">—</strong></div>
-        <div><span>Riduzione</span><strong id="savedSize">—</strong></div>
+        <div><span>Differenza</span><strong id="savedSize">—</strong></div>
+        <div><span>Audio</span><strong id="audioMode">—</strong></div>
       </div>
       <a id="downloadLink" class="download" download>Scarica video compresso</a>
     </section>
 
     <section class="note">
-      <p><strong>Nota:</strong> l'audio viene preservato con copia stream (<code>-c:a copy</code>). Il video viene ricodificato in H.264 per ridurre il peso. File molto grandi possono richiedere tempo e memoria.</p>
+      <p><strong>Nota:</strong> questa app usa FFmpeg WebAssembly. I file restano locali, ma video molto grandi possono superare la memoria disponibile nel browser. Per file oltre 1–1,5 GB è più affidabile usare FFmpeg desktop.</p>
     </section>
   </main>
 
-  <script type="module" src="app.js?v=1"></script>
+  <script type="module" src="app.js?v=2"></script>
 </body>
 </html>
