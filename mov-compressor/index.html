@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MOV Compressor</title>
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Video utility</p>
+      <h1>MOV Compressor</h1>
+      <p class="subtitle">Riduci drasticamente il peso dei file .mov ricodificando solo il video e mantenendo intatto l'audio originale.</p>
+    </div>
+    <a class="back" href="../">neuroapp</a>
+  </header>
+
+  <main>
+    <section class="panel upload-panel">
+      <label class="dropzone" id="dropzone">
+        <input id="fileInput" type="file" accept="video/quicktime,video/mp4,.mov,.mp4">
+        <span class="drop-title">Carica file .mov</span>
+        <span class="drop-text">Il file resta nel browser: non viene caricato su server.</span>
+      </label>
+      <div id="fileInfo" class="file-info">Nessun file selezionato.</div>
+    </section>
+
+    <section class="panel settings">
+      <div class="field">
+        <label for="qualityInput">Compressione CRF</label>
+        <input id="qualityInput" type="range" min="20" max="36" value="30">
+        <div class="hint"><span>Qualità alta</span><strong id="qualityLabel">CRF 30</strong><span>File più leggero</span></div>
+      </div>
+      <label class="field">Risoluzione massima
+        <select id="scaleSelect">
+          <option value="-2:720">720p consigliato</option>
+          <option value="-2:1080">1080p</option>
+          <option value="-2:540">540p molto leggero</option>
+          <option value="original">Originale</option>
+        </select>
+      </label>
+      <label class="field">Formato output
+        <select id="formatSelect">
+          <option value="mp4">MP4 compatibile</option>
+          <option value="mov">MOV</option>
+        </select>
+      </label>
+      <button id="compressBtn" class="primary" type="button" disabled>Comprimi mantenendo audio originale</button>
+    </section>
+
+    <section class="panel progress-panel">
+      <div class="progress-head"><strong id="statusText">Pronto</strong><span id="progressPct">0%</span></div>
+      <progress id="progressBar" max="1" value="0"></progress>
+      <pre id="logBox"></pre>
+    </section>
+
+    <section class="panel result-panel" id="resultPanel" hidden>
+      <h2>File compresso pronto</h2>
+      <div class="result-grid">
+        <div><span>Originale</span><strong id="originalSize">—</strong></div>
+        <div><span>Compresso</span><strong id="compressedSize">—</strong></div>
+        <div><span>Riduzione</span><strong id="savedSize">—</strong></div>
+      </div>
+      <a id="downloadLink" class="download" download>Scarica video compresso</a>
+    </section>
+
+    <section class="note">
+      <p><strong>Nota:</strong> l'audio viene preservato con copia stream (<code>-c:a copy</code>). Il video viene ricodificato in H.264 per ridurre il peso. File molto grandi possono richiedere tempo e memoria.</p>
+    </section>
+  </main>
+
+  <script type="module" src="app.js?v=1"></script>
+</body>
+</html>
