@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>MOV Compressor</title>
-  <link rel="stylesheet" href="styles.css?v=2">
+  <link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
   <header class="topbar">
     <div>
       <p class="eyebrow">Video utility</p>
       <h1>MOV Compressor</h1>
-      <p class="subtitle">Comprimi file .mov e .mp4 direttamente nel browser. Il video viene ricodificato in H.264; l'audio originale viene copiato quando compatibile, altrimenti convertito in AAC.</p>
+      <p class="subtitle">Comprimi video direttamente nel browser senza FFmpeg WASM e senza worker esterni. Il video viene ridimensionato su canvas e registrato con il motore nativo del browser.</p>
     </div>
     <a class="back" href="../">neuroapp</a>
   </header>
@@ -19,8 +19,8 @@
   <main>
     <section class="panel upload-panel">
       <label class="dropzone" id="dropzone">
-        <input id="fileInput" type="file" accept="video/quicktime,video/mp4,.mov,.mp4">
-        <span class="drop-title">Carica file .mov o .mp4</span>
+        <input id="fileInput" type="file" accept="video/*,.mov,.mp4,.m4v,.webm">
+        <span class="drop-title">Carica video</span>
         <span class="drop-text">Il file resta nel browser: non viene caricato su server.</span>
       </label>
       <div id="fileInfo" class="file-info">Nessun file selezionato.</div>
@@ -29,22 +29,23 @@
 
     <section class="panel settings">
       <div class="field">
-        <label for="qualityInput">Compressione CRF</label>
-        <input id="qualityInput" type="range" min="20" max="36" value="30">
-        <div class="hint"><span>Qualità alta</span><strong id="qualityLabel">CRF 30</strong><span>File più leggero</span></div>
+        <label for="qualityInput">Qualità output</label>
+        <input id="qualityInput" type="range" min="1" max="5" step="1" value="3">
+        <div class="hint"><span>File più leggero</span><strong id="qualityLabel">Bilanciato</strong><span>Qualità più alta</span></div>
       </div>
       <label class="field">Risoluzione massima
         <select id="scaleSelect">
+          <option value="-2:540" selected>540p molto leggero</option>
           <option value="-2:720">720p consigliato</option>
           <option value="-2:1080">1080p</option>
-          <option value="-2:540">540p molto leggero</option>
           <option value="original">Originale</option>
         </select>
       </label>
       <label class="field">Formato output
         <select id="formatSelect">
-          <option value="mp4">MP4 compatibile</option>
-          <option value="mov">MOV</option>
+          <option value="auto" selected>Automatico consigliato</option>
+          <option value="webm">WebM</option>
+          <option value="mp4">MP4 se supportato dal browser</option>
         </select>
       </label>
       <div class="button-row">
@@ -71,10 +72,10 @@
     </section>
 
     <section class="note">
-      <p><strong>Nota:</strong> questa app usa FFmpeg WebAssembly. I file restano locali, ma video molto grandi possono superare la memoria disponibile nel browser. Per file oltre 1–1,5 GB è più affidabile usare FFmpeg desktop.</p>
+      <p><strong>Nota:</strong> questo metodo non usa FFmpeg. È più compatibile con GitHub Pages e non scarica worker esterni, ma registra il video in tempo reale: se il video dura 10 minuti, la compressione richiede circa 10 minuti. Alcuni MOV/HEVC possono non essere decodificabili dal browser.</p>
     </section>
   </main>
 
-  <script type="module" src="app.js?v=2"></script>
+  <script type="module" src="app.js?v=3"></script>
 </body>
 </html>
